@@ -1,6 +1,6 @@
 import { classifyFromTitle } from '../lib/classify';
 import { canonicalizeUrl, extractTextCandidates, nowIso, parseMileageKm, parsePriceEur, parseYear } from '../lib/parse';
-import type { Listing } from '../lib/types';
+import type { Analysis, Listing } from '../lib/types';
 
 type CaptureMessage = { type: 'capture_now' };
 
@@ -154,6 +154,58 @@ function formatPercent(value: number | null): string {
 }
 
 let panelHost: HTMLElement | null = null;
+const SEARCH_ANALYSIS_TTL_MS = 60_000;
+type SearchAnalyses = Array<{ id: string; analysis: Analysis | null }>;
+type SearchAnalysisCache = {
+  key: string;
+  timestamp: number;
+  analyses: SearchAnalyses;
+};
+let searchAnalysisCache: SearchAnalysisCache | null = null;
+let searchAnalysisInFlight: { key: string; promise: Promise<SearchAnalyses | null> } | null = null;
+let searchAnalysisGeneration = 0;
+
+function buildSearchAnalysisKey(pageUrl: string, listingIds: string[]): string {
+  const sortedIds = [...listingIds].sort();
+  return `${pageUrl}|${sortedIds.join(',')}`;
+}
+
+function isSearchAnalysisCacheValid(cache: SearchAnalysisCache | null, key: string): cache is SearchAnalysisCache {
+  if (!cache) return false;
+  if (cache.key !== key) return false;
+  return Date.now() - cache.timestamp <= SEARCH_ANALYSIS_TTL_MS;
+}
+
+async function getSearchAnalyses(key: string, listings: Listing[]): Promise<SearchAnalyses | null> {
+  if (isSearchAnalysisCacheValid(searchAnalysisCache, key)) {
+    return searchAnalysisCache.analyses;
+  }
+  if (searchAnalysisInFlight && searchAnalysisInFlight.key === key) {
+    return searchAnalysisInFlight.promise;
+  }
+  const generation = searchAnalysisGeneration;
+  const request = browser.runtime
+    .sendMessage({ type: 'analyze_listings', listings })
+    .then((response) => {
+      if (searchAnalysisGeneration !== generation) return null;
+      if (!response?.analyses) return null;
+      searchAnalysisCache = { key, timestamp: Date.now(), analyses: response.analyses as SearchAnalyses };
+      return response.analyses as SearchAnalyses;
+    })
+    .finally(() => {
+      if (searchAnalysisInFlight?.key === key) {
+        searchAnalysisInFlight = null;
+      }
+    });
+  searchAnalysisInFlight = { key, promise: request };
+  return request;
+}
+
+function resetSearchAnalysisCache(): void {
+  searchAnalysisGeneration += 1;
+  searchAnalysisCache = null;
+  searchAnalysisInFlight = null;
+}
 
 function ensurePanelRoot(): ShadowRoot {
   const existing = document.getElementById('dealgauge-panel');
@@ -475,11 +527,12 @@ async function renderBadgesForSearch(): Promise<void> {
   ensureBadgeStyles();
   const searchListings = extractSearchListings();
   if (searchListings.length === 0) return;
-  const response = await browser.runtime.sendMessage({
-    type: 'analyze_listings',
-    listings: searchListings,
-  });
-  if (!response?.analyses) return;
+  const key = buildSearchAnalysisKey(
+    location.href,
+    searchListings.map((listing) => listing.id),
+  );
+  const analyses = await getSearchAnalyses(key, searchListings);
+  if (!analyses) return;
 
   const analysisMap = new Map<
     string,
@@ -491,7 +544,7 @@ async function renderBadgesForSearch(): Promise<void> {
       comparables_count: number;
     }
   >();
-  for (const entry of response.analyses) {
+  for (const entry of analyses) {
     analysisMap.set(entry.id, {
       deal_score: entry.analysis?.deal_score ?? null,
       not_enough_data: entry.analysis?.not_enough_data ?? true,
@@ -572,6 +625,7 @@ async function handleRouteChange(): Promise<void> {
   const current = location.href;
   if (current === lastUrl) return;
   lastUrl = current;
+  resetSearchAnalysisCache();
   if (!isDetailPage()) {
     const existing = document.getElementById('dealgauge-panel');
     existing?.remove();
