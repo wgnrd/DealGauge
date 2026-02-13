@@ -136,7 +136,31 @@ function extractCardPrice(card: Element): number | null {
   return parsePriceEur(priceCandidate ?? null);
 }
 
+function extractCardTeaserAttributes(card: Element): Array<{ value: string; label: string }> {
+  const rows = Array.from(card.querySelectorAll('[data-testid^="search-result-entry-teaser-attributes-"]'));
+  const attributes: Array<{ value: string; label: string }> = [];
+  for (const row of rows) {
+    const spans = Array.from(row.querySelectorAll('span')) as HTMLElement[];
+    if (spans.length === 0) continue;
+    const value = spans[0]?.innerText?.trim() ?? '';
+    const label = spans[1]?.innerText?.trim() ?? '';
+    if (!value) continue;
+    attributes.push({ value, label });
+  }
+  return attributes;
+}
+
 function extractCardYear(card: Element): number | null {
+  const attrs = extractCardTeaserAttributes(card);
+  const ezAttr = attrs.find((attr) => {
+    const label = normalizeText(attr.label);
+    return label.includes('ez') || label.includes('erstzulassung');
+  });
+  if (ezAttr) {
+    const parsed = parseYear(`${ezAttr.value} ${ezAttr.label}`);
+    if (parsed !== null) return parsed;
+  }
+
   const text = card.textContent ?? '';
   const match = text.match(/Erstzulassung[^0-9]*(19[8-9]\d|20[0-2]\d|203[0-5])/i);
   if (match) return Number.parseInt(match[1], 10);
@@ -144,11 +168,25 @@ function extractCardYear(card: Element): number | null {
 }
 
 function extractCardMileage(card: Element): number | null {
+  const attrs = extractCardTeaserAttributes(card);
+  const kmAttr = attrs.find((attr) => normalizeText(attr.label).includes('km'));
+  if (kmAttr) {
+    const parsed = parseMileageKm(`${kmAttr.value} km`);
+    if (parsed !== null) return parsed;
+  }
+
   const text = card.textContent ?? '';
   return parseMileageKm(text);
 }
 
 function extractCardPs(card: Element): number | null {
+  const attrs = extractCardTeaserAttributes(card);
+  const psAttr = attrs.find((attr) => normalizeText(attr.label).includes('ps'));
+  if (psAttr) {
+    const parsed = parsePowerPs(`${psAttr.value} PS`);
+    if (parsed !== null) return parsed;
+  }
+
   const text = card.textContent ?? '';
   return parsePowerPs(text);
 }
@@ -166,7 +204,7 @@ function extractSearchListings(): Listing[] {
 
   const listings: Listing[] = [];
   for (const [url, anchor] of uniqueUrls.entries()) {
-    const card = anchor.closest('article, li, div');
+    const card = anchor.closest('article, li') ?? anchor.closest('div');
     const title = card ? extractCardTitle(card) : (anchor.innerText?.trim() ?? null);
     const price = card ? extractCardPrice(card) : parsePriceEur(anchor.innerText ?? null);
     const year = card ? extractCardYear(card) : null;
