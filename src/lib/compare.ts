@@ -27,6 +27,12 @@ export function findComparables(target: Listing, listings: ListingsMap): Listing
       if (diff > limit) return false;
     }
 
+    if (item.ps && target.ps) {
+      const diff = Math.abs(item.ps - target.ps);
+      const limit = target.ps * 0.2;
+      if (diff > limit) return false;
+    }
+
     return item.price_eur !== null;
   });
 }
@@ -44,7 +50,14 @@ export function analyzeListing(target: Listing, listings: ListingsMap): Analysis
       target.mileage_km && a.mileage_km ? Math.abs(target.mileage_km - a.mileage_km) : 999999;
     const mileageDiffB =
       target.mileage_km && b.mileage_km ? Math.abs(target.mileage_km - b.mileage_km) : 999999;
-    return yearDiffA * 2 + mileageDiffA / 1000 - (yearDiffB * 2 + mileageDiffB / 1000);
+    const psDiffA = target.ps && a.ps ? Math.abs(target.ps - a.ps) : 200;
+    const psDiffB = target.ps && b.ps ? Math.abs(target.ps - b.ps) : 200;
+    return (
+      yearDiffA * 2 +
+      mileageDiffA / 1000 +
+      psDiffA / 10 -
+      (yearDiffB * 2 + mileageDiffB / 1000 + psDiffB / 10)
+    );
   });
   const notEnough = comparables.length < 10 || expected === null || target.price_eur === null;
   if (notEnough) {

@@ -52,6 +52,19 @@ export function parseMileageKm(text: string | null): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+export function parsePowerPs(text: string | null): number | null {
+  if (!text) return null;
+  const directMatch = text.match(/(\d{2,4})\s*ps\b/i);
+  if (directMatch?.[1]) {
+    const value = Number.parseInt(directMatch[1], 10);
+    return Number.isFinite(value) ? value : null;
+  }
+  const labelMatch = text.match(/ps[^0-9]{0,6}(\d{2,4})/i);
+  if (!labelMatch?.[1]) return null;
+  const value = Number.parseInt(labelMatch[1], 10);
+  return Number.isFinite(value) ? value : null;
+}
+
 export function normalizeText(text: string | null): string {
   return (text ?? '')
     .toLowerCase()
@@ -91,6 +104,7 @@ export function mergeListing(existing: Listing | undefined, incoming: Listing): 
     trim: prefer(existing.trim, incoming.trim),
     year: prefer(existing.year, incoming.year),
     mileage_km: prefer(existing.mileage_km, incoming.mileage_km),
+    ps: prefer(existing.ps, incoming.ps),
     captured_at: incoming.captured_at,
     source: isDetail ? 'detail' : existing.source,
   };

@@ -73,6 +73,7 @@
       'trim',
       'year',
       'mileage_km',
+      'ps',
       'captured_at',
     ];
     const csv = [
@@ -178,6 +179,10 @@
             {activeListing.mileage_km ? `${activeListing.mileage_km.toLocaleString('de-AT')} km` : '—'}
           </span>
         </div>
+        <div>
+          <span class="label">PS</span>
+          <span class="value">{activeListing.ps ? `${activeListing.ps} PS` : '—'}</span>
+        </div>
       </div>
     </section>
 
@@ -225,7 +230,9 @@
                   {formatEur(comp.price_eur)}
                 </a>
               </span>
-              <span class="muted">{comp.year ?? '—'} · {comp.mileage_km ? `${comp.mileage_km.toLocaleString('de-AT')} km` : '—'}</span>
+              <span class="muted">
+                {comp.year ?? '—'} · {comp.mileage_km ? `${comp.mileage_km.toLocaleString('de-AT')} km` : '—'} · {comp.ps ? `${comp.ps} PS` : '—'}
+              </span>
             </li>
           {/each}
         </ul>

@@ -1,5 +1,13 @@
 import { classifyFromTitle } from '../lib/classify';
-import { canonicalizeUrl, extractTextCandidates, nowIso, parseMileageKm, parsePriceEur, parseYear } from '../lib/parse';
+import {
+  canonicalizeUrl,
+  extractTextCandidates,
+  nowIso,
+  parseMileageKm,
+  parsePowerPs,
+  parsePriceEur,
+  parseYear,
+} from '../lib/parse';
 import type { Analysis, Listing } from '../lib/types';
 
 type CaptureMessage = { type: 'capture_now' };
@@ -29,11 +37,12 @@ function extractPriceFromDetail(): number | null {
   return parsePriceEur(bodyText);
 }
 
-function extractYearAndMileageFromDetail(): { year: number | null; mileage_km: number | null } {
+function extractDetailSpecs(): { year: number | null; mileage_km: number | null; ps: number | null } {
   const text = document.body?.innerText ?? '';
   return {
     year: parseYear(text),
     mileage_km: parseMileageKm(text),
+    ps: parsePowerPs(text),
   };
 }
 
@@ -43,7 +52,7 @@ function buildDetailListing(): Listing | null {
   const capturedAt = nowIso();
   const title = extractTitleFromDetail();
   const price = extractPriceFromDetail();
-  const { year, mileage_km } = extractYearAndMileageFromDetail();
+  const { year, mileage_km, ps } = extractDetailSpecs();
   const classified = classifyFromTitle(title);
   return {
     id: url,
@@ -56,6 +65,7 @@ function buildDetailListing(): Listing | null {
     trim: classified.trim,
     year,
     mileage_km,
+    ps,
     captured_at: capturedAt,
     source: 'detail',
   };
@@ -88,6 +98,11 @@ function extractCardMileage(card: Element): number | null {
   return parseMileageKm(text);
 }
 
+function extractCardPs(card: Element): number | null {
+  const text = card.textContent ?? '';
+  return parsePowerPs(text);
+}
+
 function extractSearchListings(): Listing[] {
   if (!isWillhaben()) return [];
   const anchors = Array.from(document.querySelectorAll('a[href*="/iad/"]')) as HTMLAnchorElement[];
@@ -106,6 +121,7 @@ function extractSearchListings(): Listing[] {
     const price = card ? extractCardPrice(card) : parsePriceEur(anchor.innerText ?? null);
     const year = card ? extractCardYear(card) : null;
     const mileage_km = card ? extractCardMileage(card) : null;
+    const ps = card ? extractCardPs(card) : null;
     const capturedAt = nowIso();
     const classified = classifyFromTitle(title);
     listings.push({
@@ -119,6 +135,7 @@ function extractSearchListings(): Listing[] {
       trim: classified.trim,
       year,
       mileage_km,
+      ps,
       captured_at: capturedAt,
       source: 'search',
     });
@@ -231,6 +248,7 @@ function renderPanel(data: {
   brand: string | null;
   model: string | null;
   trim: string | null;
+  ps: number | null;
   analysis:
     | {
         expected_price: number | null;
@@ -318,6 +336,7 @@ function renderPanel(data: {
         <div class="row"><span class="label">Brand</span><span>${data.brand ?? '—'}</span></div>
         <div class="row"><span class="label">Model</span><span>${data.model ?? '—'}</span></div>
         <div class="row"><span class="label">Trim</span><span>${data.trim ?? '—'}</span></div>
+        <div class="row"><span class="label">PS</span><span>${data.ps ? data.ps + ' PS' : '—'}</span></div>
       </div>
       <div class="divider"></div>
       <div class="card">
@@ -355,7 +374,7 @@ function renderPanel(data: {
                         comp.price_eur,
                       )}</a></span><span class="muted">${comp.year ?? '—'} · ${
                         comp.mileage_km ? comp.mileage_km.toLocaleString('de-AT') + ' km' : '—'
-                      }</span></li>`,
+                      } · ${comp.ps ? comp.ps + ' PS' : '—'}</span></li>`,
                   )
                   .join('')}
               </ul>
@@ -711,6 +730,7 @@ async function renderPanelForDetail(): Promise<void> {
     brand: response.listing.brand,
     model: response.listing.model,
     trim: response.listing.trim,
+    ps: response.listing.ps ?? null,
     analysis: response.analysis ?? null,
     price_history: response.listing.price_history ?? [],
     confidence,
