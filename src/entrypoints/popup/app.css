@@ -42,9 +42,9 @@ header {
 }
 
 .brand img {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
 }
 
 h1 {
@@ -57,6 +57,52 @@ header p {
   margin: 4px 0 0;
   font-size: 12px;
   color: #5b5247;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.action {
+  border: 1px solid rgba(29, 27, 22, 0.2);
+  background: #f4efe7;
+  color: #1d1b16;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action.danger {
+  border-color: rgba(139, 29, 29, 0.5);
+  color: #8b1d1d;
+  background: #f8edea;
+}
+
+.inline-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5b5247;
+}
+
+.inline-input input {
+  width: 60px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(29, 27, 22, 0.2);
+  background: #fffaf2;
+  font-size: 12px;
 }
 
 .metric {

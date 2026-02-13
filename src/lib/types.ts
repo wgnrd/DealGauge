@@ -12,6 +12,10 @@ export type Listing = {
   year: number | null;
   mileage_km: number | null;
   ps: number | null;
+  erstzulassung: string | null;
+  fuel: string | null;
+  drivetrain: string | null;
+  transmission: string | null;
   captured_at: string;
   source: ListingSource;
 };

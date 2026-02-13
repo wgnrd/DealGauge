@@ -9,6 +9,7 @@
   let statusMessage: string | null = null;
   let isDetailPage = false;
   let datasetLastCaptured: string | null = null;
+  let pruneDays = 30;
 
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -74,6 +75,10 @@
       'year',
       'mileage_km',
       'ps',
+      'erstzulassung',
+      'fuel',
+      'drivetrain',
+      'transmission',
       'captured_at',
     ];
     const csv = [
@@ -95,6 +100,30 @@
     a.download = 'dealgauge-listings.csv';
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function clearAllData() {
+    if (!window.confirm('Clear all stored listings? This cannot be undone.')) return;
+    await browser.runtime.sendMessage({ type: 'clear_all' });
+    await loadData();
+  }
+
+  async function deleteCurrentListing() {
+    if (!activeListing) return;
+    if (!window.confirm('Delete the current listing from storage?')) return;
+    await browser.runtime.sendMessage({ type: 'delete_listing', id: activeListing.id });
+    await loadData();
+  }
+
+  async function pruneOlderThan() {
+    const days = Number(pruneDays);
+    if (!Number.isFinite(days) || days <= 0) {
+      statusMessage = 'Enter a valid number of days for pruning.';
+      return;
+    }
+    if (!window.confirm(`Delete listings last captured more than ${days} days ago?`)) return;
+    await browser.runtime.sendMessage({ type: 'prune_older_than', days });
+    await loadData();
   }
 
   async function loadData() {
@@ -150,6 +179,28 @@
     <span class="value">{formatDate(datasetLastCaptured)}</span>
   </section>
 
+  <section class="analysis">
+    <div class="metric-row">
+      <span class="label">Data actions</span>
+    </div>
+    <div class="action-row">
+      <button class="action danger" on:click={clearAllData}>Clear all data</button>
+      <button class="action" on:click={deleteCurrentListing} disabled={!activeListing}>Delete current listing</button>
+    </div>
+    <div class="action-row">
+      <button class="action" on:click={() => downloadData('json')}>Export JSON</button>
+      <button class="action" on:click={() => downloadData('csv')}>Export CSV</button>
+    </div>
+    <div class="action-row">
+      <label class="inline-input">
+        <span>Prune older than</span>
+        <input type="number" min="1" bind:value={pruneDays} />
+        <span>days</span>
+      </label>
+      <button class="action" on:click={pruneOlderThan}>Prune</button>
+    </div>
+  </section>
+
   {#if statusMessage}
     <section class="status">{statusMessage}</section>
   {:else if activeListing}
@@ -182,6 +233,22 @@
         <div>
           <span class="label">PS</span>
           <span class="value">{activeListing.ps ? `${activeListing.ps} PS` : '—'}</span>
+        </div>
+        <div>
+          <span class="label">Erstzulassung</span>
+          <span class="value">{formatText(activeListing.erstzulassung)}</span>
+        </div>
+        <div>
+          <span class="label">Treibstoff</span>
+          <span class="value">{formatText(activeListing.fuel)}</span>
+        </div>
+        <div>
+          <span class="label">Antrieb</span>
+          <span class="value">{formatText(activeListing.drivetrain)}</span>
+        </div>
+        <div>
+          <span class="label">Getriebeart</span>
+          <span class="value">{formatText(activeListing.transmission)}</span>
         </div>
       </div>
     </section>
@@ -260,8 +327,4 @@
     </section>
   {/if}
 
-  <section class="export">
-    <button class="ghost" on:click={() => downloadData('json')}>Export JSON</button>
-    <button class="ghost" on:click={() => downloadData('csv')}>Export CSV</button>
-  </section>
 </main>

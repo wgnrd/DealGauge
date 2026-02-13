@@ -7,6 +7,7 @@ import {
   parsePowerPs,
   parsePriceEur,
   parseYear,
+  normalizeText,
 } from '../lib/parse';
 import type { Analysis, Listing } from '../lib/types';
 
@@ -37,12 +38,57 @@ function extractPriceFromDetail(): number | null {
   return parsePriceEur(bodyText);
 }
 
-function extractDetailSpecs(): { year: number | null; mileage_km: number | null; ps: number | null } {
+function findBasisdatenRoot(): Element | null {
+  const headings = Array.from(document.querySelectorAll('h2, h3, h4'));
+  for (const heading of headings) {
+    const text = normalizeText(heading.textContent);
+    if (!text || !text.includes('basisdaten')) continue;
+    let sibling = heading.nextElementSibling;
+    while (sibling) {
+      if (sibling.querySelector('[data-testid="attribute-item"]')) return sibling;
+      sibling = sibling.nextElementSibling;
+    }
+    const parent = heading.parentElement;
+    if (parent && parent.querySelector('[data-testid="attribute-item"]')) return parent;
+  }
+  return null;
+}
+
+function extractBasisdatenValue(root: ParentNode, label: string): string | null {
+  const items = Array.from(root.querySelectorAll('[data-testid="attribute-item"]'));
+  for (const item of items) {
+    const title = item.querySelector('[data-testid="attribute-title"]')?.textContent ?? '';
+    const value = item.querySelector('[data-testid="attribute-value"]')?.textContent ?? '';
+    if (!title || !value) continue;
+    if (normalizeText(title).includes(label)) return value.trim();
+  }
+  return null;
+}
+
+function extractDetailSpecs(): {
+  year: number | null;
+  mileage_km: number | null;
+  ps: number | null;
+  erstzulassung: string | null;
+  fuel: string | null;
+  drivetrain: string | null;
+  transmission: string | null;
+} {
   const text = document.body?.innerText ?? '';
+  const basisdatenRoot = findBasisdatenRoot();
+  const erstzulassung = basisdatenRoot ? extractBasisdatenValue(basisdatenRoot, 'erstzulassung') : null;
+  const fuel = basisdatenRoot ? extractBasisdatenValue(basisdatenRoot, 'treibstoff') : null;
+  const drivetrain = basisdatenRoot ? extractBasisdatenValue(basisdatenRoot, 'antrieb') : null;
+  const transmission = basisdatenRoot ? extractBasisdatenValue(basisdatenRoot, 'getriebeart') : null;
+  const yearFromBasis = erstzulassung ? parseYear(erstzulassung) : null;
   return {
-    year: parseYear(text),
+    year: yearFromBasis ?? parseYear(text),
     mileage_km: parseMileageKm(text),
     ps: parsePowerPs(text),
+    erstzulassung,
+    fuel,
+    drivetrain,
+    transmission,
   };
 }
 
@@ -52,7 +98,7 @@ function buildDetailListing(): Listing | null {
   const capturedAt = nowIso();
   const title = extractTitleFromDetail();
   const price = extractPriceFromDetail();
-  const { year, mileage_km, ps } = extractDetailSpecs();
+  const { year, mileage_km, ps, erstzulassung, fuel, drivetrain, transmission } = extractDetailSpecs();
   const classified = classifyFromTitle(title);
   return {
     id: url,
@@ -66,6 +112,10 @@ function buildDetailListing(): Listing | null {
     year,
     mileage_km,
     ps,
+    erstzulassung,
+    fuel,
+    drivetrain,
+    transmission,
     captured_at: capturedAt,
     source: 'detail',
   };
@@ -136,6 +186,10 @@ function extractSearchListings(): Listing[] {
       year,
       mileage_km,
       ps,
+      erstzulassung: null,
+      fuel: null,
+      drivetrain: null,
+      transmission: null,
       captured_at: capturedAt,
       source: 'search',
     });
@@ -243,12 +297,17 @@ function ensurePanelRoot(): ShadowRoot {
 }
 
 function renderPanel(data: {
+  url: string;
   title: string | null;
   price_eur: number | null;
   brand: string | null;
   model: string | null;
   trim: string | null;
   ps: number | null;
+  erstzulassung: string | null;
+  fuel: string | null;
+  drivetrain: string | null;
+  transmission: string | null;
   analysis:
     | {
         expected_price: number | null;
@@ -264,6 +323,13 @@ function renderPanel(data: {
   confidence: string;
 }): void {
   const notEnough = !data.analysis || data.analysis.not_enough_data;
+  const comparables =
+    data.analysis?.comparables?.filter((comp) => canonicalizeUrl(comp.url) !== canonicalizeUrl(data.url)) ?? [];
+  const cheaperAlternatives = comparables.filter(
+    (comp) => comp.price_eur !== null && data.price_eur !== null && comp.price_eur < data.price_eur,
+  );
+  const detailsCollapsed =
+    (window.localStorage.getItem('dealgauge_panel_details_collapsed') ?? 'true') === 'true';
   const root = ensurePanelRoot();
   root.innerHTML = `
     <style>
@@ -281,7 +347,7 @@ function renderPanel(data: {
       }
       .header { display: flex; justify-content: space-between; align-items: start; gap: 8px; cursor: grab; }
       .brand { display: flex; align-items: center; gap: 8px; }
-      .brand img { width: 34px; height: 34px; border-radius: 8px; display: block; }
+      .brand img { width: 60px; height: 60px; border-radius: 14px; display: block; }
       .title { font-size: 17px; font-weight: 600; margin: 0; }
       .subtitle { font-size: 13px; color: #6a5f53; margin: 4px 0 0; }
       .close {
@@ -293,17 +359,30 @@ function renderPanel(data: {
         border-radius: 6px;
       }
       .close:hover { background: rgba(0,0,0,0.06); }
-      .price { font-size: 22px; font-weight: 600; margin: 10px 0; }
-      .row { display: flex; justify-content: space-between; font-size: 14px; margin: 6px 0; }
-      .label { color: #6a5f53; }
+      .price-row { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
+      .price { font-size: 18px; font-weight: 600; }
+      .toggle {
+        all: unset;
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+      .toggle:hover { background: rgba(0,0,0,0.06); }
+      .row { display: flex; justify-content: space-between; font-size: 11.5px; margin: 6px 0; }
+      .label { color: #6a5f53; font-size: 11px; }
       .score { font-size: 15px; margin-top: 10px; display: flex; justify-content: space-between; }
       .pos { color: #1d6b3b; font-weight: 600; }
       .neg { color: #8b1d1d; font-weight: 600; }
       .note { font-size: 14px; color: #8b1d1d; margin-top: 8px; }
-      .muted { color: #7b7164; font-size: 12px; }
-      ul { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
-      li { display: flex; justify-content: space-between; font-size: 12px; }
+      .muted { color: #7b7164; font-size: 11.5px; }
+      ul { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 8px; }
+      li { display: flex; justify-content: space-between; font-size: 12px; align-items: flex-start; }
       li a { color: #1d1b16; text-decoration: underline; text-decoration-thickness: 1px; }
+      .comp-price { font-size: 14.5px; font-weight: 600; }
+      .comp-meta { text-align: right; line-height: 1.35; }
+      .last-viewed { display: block; color: #8a8176; font-size: 11.5px; margin-top: 2px; }
       .card {
         background: rgba(255, 255, 255, 0.7);
         border: 1px solid rgba(29, 27, 22, 0.08);
@@ -318,6 +397,14 @@ function renderPanel(data: {
         color: #7b7164;
         margin-bottom: 6px;
       }
+      .card.comps li,
+      .card.alternatives li { font-size: 13.5px; }
+      .card.comps .section-title,
+      .card.alternatives .section-title { font-size: 12px; }
+      .card.comps .muted,
+      .card.alternatives .muted { font-size: 12.5px; }
+      .card.details.collapsed .details-body { display: none; }
+      .card.details.collapsed .price-row { margin: 4px 0; }
       .divider { border-top: 1px solid rgba(29, 27, 22, 0.08); margin: 10px 0; }
     </style>
     <div class="panel" role="dialog" aria-label="DealGauge">
@@ -331,12 +418,23 @@ function renderPanel(data: {
         </div>
         <button class="close" aria-label="Close">×</button>
       </div>
-      <div class="card">
-        <div class="price">${formatEur(data.price_eur)}</div>
-        <div class="row"><span class="label">Brand</span><span>${data.brand ?? '—'}</span></div>
-        <div class="row"><span class="label">Model</span><span>${data.model ?? '—'}</span></div>
-        <div class="row"><span class="label">Trim</span><span>${data.trim ?? '—'}</span></div>
-        <div class="row"><span class="label">PS</span><span>${data.ps ? data.ps + ' PS' : '—'}</span></div>
+      <div class="card details${detailsCollapsed ? ' collapsed' : ''}">
+        <div class="price-row">
+          <div class="price">${formatEur(data.price_eur)}</div>
+          <button class="toggle" data-toggle-details="true" aria-label="Toggle datapoints">${
+            detailsCollapsed ? '▸' : '▾'
+          }</button>
+        </div>
+        <div class="details-body">
+          <div class="row"><span class="label">Brand</span><span>${data.brand ?? '—'}</span></div>
+          <div class="row"><span class="label">Model</span><span>${data.model ?? '—'}</span></div>
+          <div class="row"><span class="label">Trim</span><span>${data.trim ?? '—'}</span></div>
+          <div class="row"><span class="label">PS</span><span>${data.ps ? data.ps + ' PS' : '—'}</span></div>
+          <div class="row"><span class="label">Erstzulassung</span><span>${data.erstzulassung ?? '—'}</span></div>
+          <div class="row"><span class="label">Treibstoff</span><span>${data.fuel ?? '—'}</span></div>
+          <div class="row"><span class="label">Antrieb</span><span>${data.drivetrain ?? '—'}</span></div>
+          <div class="row"><span class="label">Getriebeart</span><span>${data.transmission ?? '—'}</span></div>
+        </div>
       </div>
       <div class="divider"></div>
       <div class="card">
@@ -361,20 +459,57 @@ function renderPanel(data: {
         }
       </div>
       ${
-        data.analysis?.comparables?.length
+        comparables.length
           ? `
             <div class="divider"></div>
-            <div class="card">
+            <div class="card comps">
               <div class="section-title">Closest comps</div>
               <ul>
-                ${data.analysis.comparables
+                ${comparables
                   .map(
                     (comp) =>
-                      `<li><span><a href="${comp.url}" target="_blank" rel="noreferrer">${formatEur(
+                      `<li><span class="comp-price"><a href="${comp.url}" target="_blank" rel="noreferrer">${formatEur(
                         comp.price_eur,
-                      )}</a></span><span class="muted">${comp.year ?? '—'} · ${
+                      )}</a></span><span class="comp-meta">${comp.year ?? '—'} · ${
                         comp.mileage_km ? comp.mileage_km.toLocaleString('de-AT') + ' km' : '—'
-                      } · ${comp.ps ? comp.ps + ' PS' : '—'}</span></li>`,
+                      } · ${comp.ps ? comp.ps + ' PS' : '—'}<span class="last-viewed">${
+                        comp.captured_at
+                          ? `Last viewed ${new Date(comp.captured_at).toLocaleString('de-AT', {
+                              dateStyle: 'medium',
+                              timeStyle: 'short',
+                            })}`
+                          : 'Last viewed —'
+                      }</span></span></li>`,
+                  )
+                  .join('')}
+              </ul>
+            </div>
+          `
+          : ''
+      }
+      ${
+        cheaperAlternatives.length
+          ? `
+            <div class="divider"></div>
+            <div class="card alternatives">
+              <div class="section-title">Cheaper alternatives</div>
+              <ul>
+                ${cheaperAlternatives
+                  .slice(0, 5)
+                  .map(
+                    (comp) =>
+                      `<li><span class="comp-price"><a href="${comp.url}" target="_blank" rel="noreferrer">${formatEur(
+                        comp.price_eur,
+                      )}</a></span><span class="comp-meta">${comp.year ?? '—'} · ${
+                        comp.mileage_km ? comp.mileage_km.toLocaleString('de-AT') + ' km' : '—'
+                      } · ${comp.ps ? comp.ps + ' PS' : '—'}<span class="last-viewed">${
+                        comp.captured_at
+                          ? `Last viewed ${new Date(comp.captured_at).toLocaleString('de-AT', {
+                              dateStyle: 'medium',
+                              timeStyle: 'short',
+                            })}`
+                          : 'Last viewed —'
+                      }</span></span></li>`,
                   )
                   .join('')}
               </ul>
@@ -410,6 +545,18 @@ function renderPanel(data: {
   closeButton?.addEventListener('click', () => {
     root.host.remove();
   });
+
+  const toggleButton = root.querySelector('[data-toggle-details="true"]') as HTMLButtonElement | null;
+  if (toggleButton) {
+    toggleButton.addEventListener('click', () => {
+      const card = root.querySelector('.card.details') as HTMLElement | null;
+      if (!card) return;
+      const nextCollapsed = !card.classList.contains('collapsed');
+      card.classList.toggle('collapsed', nextCollapsed);
+      toggleButton.textContent = nextCollapsed ? '▸' : '▾';
+      window.localStorage.setItem('dealgauge_panel_details_collapsed', String(nextCollapsed));
+    });
+  }
 
   const handle = root.querySelector('[data-drag-handle="true"]') as HTMLElement | null;
   if (handle) {
@@ -725,12 +872,17 @@ async function renderPanelForDetail(): Promise<void> {
   const confidence =
     comps >= 25 && hasYear && hasMileage ? 'High' : comps >= 10 && (hasYear || hasMileage) ? 'Medium' : 'Low';
   renderPanel({
+    url: response.listing.url,
     title: response.listing.title,
     price_eur: response.listing.price_eur,
     brand: response.listing.brand,
     model: response.listing.model,
     trim: response.listing.trim,
     ps: response.listing.ps ?? null,
+    erstzulassung: response.listing.erstzulassung ?? null,
+    fuel: response.listing.fuel ?? null,
+    drivetrain: response.listing.drivetrain ?? null,
+    transmission: response.listing.transmission ?? null,
     analysis: response.analysis ?? null,
     price_history: response.listing.price_history ?? [],
     confidence,

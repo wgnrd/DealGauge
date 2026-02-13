@@ -105,6 +105,10 @@ export function mergeListing(existing: Listing | undefined, incoming: Listing): 
     year: prefer(existing.year, incoming.year),
     mileage_km: prefer(existing.mileage_km, incoming.mileage_km),
     ps: prefer(existing.ps, incoming.ps),
+    erstzulassung: prefer(existing.erstzulassung, incoming.erstzulassung),
+    fuel: prefer(existing.fuel, incoming.fuel),
+    drivetrain: prefer(existing.drivetrain, incoming.drivetrain),
+    transmission: prefer(existing.transmission, incoming.transmission),
     captured_at: incoming.captured_at,
     source: isDetail ? 'detail' : existing.source,
   };

@@ -1,3 +1,4 @@
+import { normalizeText } from './parse';
 import type { Analysis, Listing, ListingsMap } from './types';
 
 function median(values: number[]): number | null {
@@ -17,6 +18,10 @@ export function findComparables(target: Listing, listings: ListingsMap): Listing
     if (item.brand !== target.brand || item.model !== target.model) return false;
     if ((item.trim ?? null) !== (target.trim ?? null)) return false;
 
+    if (item.drivetrain && target.drivetrain) {
+      if (normalizeText(item.drivetrain) !== normalizeText(target.drivetrain)) return false;
+    }
+
     if (item.year && target.year) {
       if (Math.abs(item.year - target.year) > 2) return false;
     }
@@ -28,9 +33,7 @@ export function findComparables(target: Listing, listings: ListingsMap): Listing
     }
 
     if (item.ps && target.ps) {
-      const diff = Math.abs(item.ps - target.ps);
-      const limit = target.ps * 0.2;
-      if (diff > limit) return false;
+      if (item.ps !== target.ps) return false;
     }
 
     return item.price_eur !== null;
