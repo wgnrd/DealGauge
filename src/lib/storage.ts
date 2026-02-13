@@ -38,3 +38,33 @@ export async function getListing(id: string): Promise<Listing | null> {
   const listings = await loadListings();
   return listings[id] ?? null;
 }
+
+export async function clearAllListings(): Promise<void> {
+  await browser.storage.local.remove(KEY);
+}
+
+export async function deleteListing(id: string): Promise<boolean> {
+  const listings = await loadListings();
+  if (!listings[id]) return false;
+  delete listings[id];
+  await saveListings(listings);
+  return true;
+}
+
+export async function pruneListingsOlderThan(days: number): Promise<number> {
+  if (!Number.isFinite(days) || days <= 0) return 0;
+  const listings = await loadListings();
+  const threshold = Date.now() - days * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  for (const [id, listing] of Object.entries(listings)) {
+    const captured = Date.parse(listing.captured_at ?? '');
+    if (Number.isFinite(captured) && captured < threshold) {
+      delete listings[id];
+      removed += 1;
+    }
+  }
+  if (removed > 0) {
+    await saveListings(listings);
+  }
+  return removed;
+}

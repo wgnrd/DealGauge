@@ -1,5 +1,13 @@
 import { analyzeListing } from '../lib/compare';
-import { countListings, getListing, loadListings, upsertListings } from '../lib/storage';
+import {
+  clearAllListings,
+  countListings,
+  deleteListing,
+  getListing,
+  loadListings,
+  pruneListingsOlderThan,
+  upsertListings,
+} from '../lib/storage';
 import type { Listing } from '../lib/types';
 
 type Message =
@@ -8,7 +16,10 @@ type Message =
   | { type: 'get_listing'; id: string }
   | { type: 'get_analysis'; id: string }
   | { type: 'get_export' }
-  | { type: 'analyze_listings'; listings: Listing[] };
+  | { type: 'analyze_listings'; listings: Listing[] }
+  | { type: 'clear_all' }
+  | { type: 'delete_listing'; id: string }
+  | { type: 'prune_older_than'; days: number };
 
 export default defineBackground(() => {
   browser.runtime.onMessage.addListener((message: Message) => {
@@ -59,6 +70,18 @@ export default defineBackground(() => {
         }));
         return { ok: true, analyses };
       });
+    }
+
+    if (message?.type === 'clear_all') {
+      return clearAllListings().then(() => ({ ok: true }));
+    }
+
+    if (message?.type === 'delete_listing') {
+      return deleteListing(message.id).then((removed) => ({ ok: true, removed }));
+    }
+
+    if (message?.type === 'prune_older_than') {
+      return pruneListingsOlderThan(message.days).then((removed) => ({ ok: true, removed }));
     }
 
     return Promise.resolve({ ok: false });
