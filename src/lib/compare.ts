@@ -1,6 +1,9 @@
 import { normalizeText } from './parse';
 import type { Analysis, Listing, ListingsMap } from './types';
 
+const MIN_COMPARABLES_FOR_WEIGHTED_ESTIMATE = 10;
+const TRIM_PERCENT = 0.1;
+
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -9,6 +12,46 @@ function median(values: number[]): number | null {
     return (sorted[mid - 1] + sorted[mid]) / 2;
   }
   return sorted[mid];
+}
+
+function trimPriceOutliers(listings: Listing[]): Listing[] {
+  if (listings.length < MIN_COMPARABLES_FOR_WEIGHTED_ESTIMATE) return listings;
+
+  const sorted = [...listings].sort((a, b) => (a.price_eur ?? 0) - (b.price_eur ?? 0));
+  const trimCount = Math.floor(sorted.length * TRIM_PERCENT);
+  if (trimCount === 0) return sorted;
+  const trimmed = sorted.slice(trimCount, sorted.length - trimCount);
+  return trimmed.length > 0 ? trimmed : sorted;
+}
+
+function listingDistanceWeight(target: Listing, comparable: Listing): number {
+  const yearDistance =
+    target.year !== null && comparable.year !== null ? Math.abs(target.year - comparable.year) : 2;
+  const mileageDistanceRatio =
+    target.mileage_km !== null && comparable.mileage_km !== null
+      ? Math.abs(target.mileage_km - comparable.mileage_km) / Math.max(target.mileage_km, 1)
+      : 0.25;
+  return 1 / (1 + yearDistance + mileageDistanceRatio * 4);
+}
+
+function weightedExpectedPrice(target: Listing, comparables: Listing[]): number | null {
+  if (comparables.length === 0) return null;
+
+  let weightedSum = 0;
+  let weightTotal = 0;
+  for (const comparable of comparables) {
+    if (comparable.price_eur === null) continue;
+    const weight = listingDistanceWeight(target, comparable);
+    weightedSum += comparable.price_eur * weight;
+    weightTotal += weight;
+  }
+
+  if (weightTotal === 0) {
+    return median(
+      comparables.map((item) => item.price_eur).filter((value): value is number => value !== null),
+    );
+  }
+  return weightedSum / weightTotal;
 }
 
 export function findComparables(target: Listing, listings: ListingsMap): Listing[] {
@@ -42,10 +85,13 @@ export function findComparables(target: Listing, listings: ListingsMap): Listing
 
 export function analyzeListing(target: Listing, listings: ListingsMap): Analysis {
   const comparables = findComparables(target, listings);
-  const prices = comparables
+  const pricedComparables = comparables.filter((item): item is Listing & { price_eur: number } => item.price_eur !== null);
+  const prices = pricedComparables
     .map((item) => item.price_eur)
     .filter((value): value is number => value !== null);
-  const expected = median(prices);
+  const sparseData = comparables.length < MIN_COMPARABLES_FOR_WEIGHTED_ESTIMATE;
+  const estimateBase = sparseData ? pricedComparables : trimPriceOutliers(pricedComparables);
+  const expected = sparseData ? median(prices) : weightedExpectedPrice(target, estimateBase);
   const ranked = [...comparables].sort((a, b) => {
     const yearDiffA = target.year && a.year ? Math.abs(target.year - a.year) : 10;
     const yearDiffB = target.year && b.year ? Math.abs(target.year - b.year) : 10;
@@ -62,7 +108,7 @@ export function analyzeListing(target: Listing, listings: ListingsMap): Analysis
       (yearDiffB * 2 + mileageDiffB / 1000 + psDiffB / 10)
     );
   });
-  const notEnough = comparables.length < 10 || expected === null || target.price_eur === null;
+  const notEnough = sparseData || expected === null || target.price_eur === null;
   if (notEnough) {
     return {
       expected_price: expected,
@@ -74,7 +120,8 @@ export function analyzeListing(target: Listing, listings: ListingsMap): Analysis
       not_enough_data: true,
     };
   }
-  const diff = expected - target.price_eur;
+  const targetPrice = target.price_eur as number;
+  const diff = expected - targetPrice;
   const diffPct = diff / expected;
   return {
     expected_price: expected,

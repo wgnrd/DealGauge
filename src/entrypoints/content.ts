@@ -136,7 +136,31 @@ function extractCardPrice(card: Element): number | null {
   return parsePriceEur(priceCandidate ?? null);
 }
 
+function extractCardTeaserAttributes(card: Element): Array<{ value: string; label: string }> {
+  const rows = Array.from(card.querySelectorAll('[data-testid^="search-result-entry-teaser-attributes-"]'));
+  const attributes: Array<{ value: string; label: string }> = [];
+  for (const row of rows) {
+    const spans = Array.from(row.querySelectorAll('span')) as HTMLElement[];
+    if (spans.length === 0) continue;
+    const value = spans[0]?.innerText?.trim() ?? '';
+    const label = spans[1]?.innerText?.trim() ?? '';
+    if (!value) continue;
+    attributes.push({ value, label });
+  }
+  return attributes;
+}
+
 function extractCardYear(card: Element): number | null {
+  const attrs = extractCardTeaserAttributes(card);
+  const ezAttr = attrs.find((attr) => {
+    const label = normalizeText(attr.label);
+    return label.includes('ez') || label.includes('erstzulassung');
+  });
+  if (ezAttr) {
+    const parsed = parseYear(`${ezAttr.value} ${ezAttr.label}`);
+    if (parsed !== null) return parsed;
+  }
+
   const text = card.textContent ?? '';
   const match = text.match(/Erstzulassung[^0-9]*(19[8-9]\d|20[0-2]\d|203[0-5])/i);
   if (match) return Number.parseInt(match[1], 10);
@@ -144,11 +168,25 @@ function extractCardYear(card: Element): number | null {
 }
 
 function extractCardMileage(card: Element): number | null {
+  const attrs = extractCardTeaserAttributes(card);
+  const kmAttr = attrs.find((attr) => normalizeText(attr.label).includes('km'));
+  if (kmAttr) {
+    const parsed = parseMileageKm(`${kmAttr.value} km`);
+    if (parsed !== null) return parsed;
+  }
+
   const text = card.textContent ?? '';
   return parseMileageKm(text);
 }
 
 function extractCardPs(card: Element): number | null {
+  const attrs = extractCardTeaserAttributes(card);
+  const psAttr = attrs.find((attr) => normalizeText(attr.label).includes('ps'));
+  if (psAttr) {
+    const parsed = parsePowerPs(`${psAttr.value} PS`);
+    if (parsed !== null) return parsed;
+  }
+
   const text = card.textContent ?? '';
   return parsePowerPs(text);
 }
@@ -166,7 +204,7 @@ function extractSearchListings(): Listing[] {
 
   const listings: Listing[] = [];
   for (const [url, anchor] of uniqueUrls.entries()) {
-    const card = anchor.closest('article, li, div');
+    const card = anchor.closest('article, li') ?? anchor.closest('div');
     const title = card ? extractCardTitle(card) : (anchor.innerText?.trim() ?? null);
     const price = card ? extractCardPrice(card) : parsePriceEur(anchor.innerText ?? null);
     const year = card ? extractCardYear(card) : null;
@@ -413,22 +451,22 @@ function renderPanel(data: {
           <img src="${browser.runtime.getURL('icon/128.png')}" alt="DealGauge" />
           <div>
             <div class="title">DealGauge</div>
-          <div class="subtitle">${data.title ?? 'Listing'}</div>
+          <div class="subtitle">${data.title ?? 'Anzeige'}</div>
           </div>
         </div>
-        <button class="close" aria-label="Close">×</button>
+        <button class="close" aria-label="Schließen">×</button>
       </div>
       <div class="card details${detailsCollapsed ? ' collapsed' : ''}">
         <div class="price-row">
           <div class="price">${formatEur(data.price_eur)}</div>
-          <button class="toggle" data-toggle-details="true" aria-label="Toggle datapoints">${
+          <button class="toggle" data-toggle-details="true" aria-label="Details ein-/ausblenden">${
             detailsCollapsed ? '▸' : '▾'
           }</button>
         </div>
         <div class="details-body">
-          <div class="row"><span class="label">Brand</span><span>${data.brand ?? '—'}</span></div>
-          <div class="row"><span class="label">Model</span><span>${data.model ?? '—'}</span></div>
-          <div class="row"><span class="label">Trim</span><span>${data.trim ?? '—'}</span></div>
+        <div class="row"><span class="label">Marke</span><span>${data.brand ?? '—'}</span></div>
+        <div class="row"><span class="label">Modell</span><span>${data.model ?? '—'}</span></div>
+        <div class="row"><span class="label">Ausstattung</span><span>${data.trim ?? '—'}</span></div>
           <div class="row"><span class="label">PS</span><span>${data.ps ? data.ps + ' PS' : '—'}</span></div>
           <div class="row"><span class="label">Erstzulassung</span><span>${data.erstzulassung ?? '—'}</span></div>
           <div class="row"><span class="label">Treibstoff</span><span>${data.fuel ?? '—'}</span></div>
@@ -438,21 +476,21 @@ function renderPanel(data: {
       </div>
       <div class="divider"></div>
       <div class="card">
-        <div class="section-title">Market</div>
-        <div class="row"><span class="label">Comparables</span><span>${data.analysis?.comparables_count ?? 0}</span></div>
-        <div class="row"><span class="label">Confidence</span><span>${data.confidence}</span></div>
-        <div class="row"><span class="label">Last captured</span><span class="muted">${data.last_captured ?? '—'}</span></div>
+        <div class="section-title">Datenanalyse</div>
+        <div class="row"><span class="label">Vergleichbare Anzeigen</span><span>${data.analysis?.comparables_count ?? 0}</span></div>
+        <div class="row"><span class="label">Datenbasis</span><span>${data.confidence} (${data.analysis?.comparables_count ?? 0})</span></div>
+        <div class="row"><span class="label">Zuletzt erfasst</span><span class="muted">${data.last_captured ?? '—'}</span></div>
         ${
           notEnough
-            ? `<div class="note">Not enough data (need 10+).</div>`
+            ? `<div class="note">Nicht genug Daten (mind. 10 vergleichbare Anzeigen nötig).</div>`
             : `
-              <div class="row"><span class="label">Expected</span><span>${formatEur(
+              <div class="row"><span class="label">Erwartet</span><span>${formatEur(
                 data.analysis?.expected_price ?? null,
               )}</span></div>
-              <div class="row"><span class="label">Difference</span><span>${formatEur(
+              <div class="row"><span class="label">Abweichung</span><span>${formatEur(
                 data.analysis?.diff_eur ?? null,
               )} (${formatPercent(data.analysis?.diff_pct ?? null)})</span></div>
-              <div class="score"><span>Deal score</span><span class="${
+              <div class="score"><span>Angebots-Score</span><span class="${
                 (data.analysis?.deal_score ?? 0) >= 0 ? 'pos' : 'neg'
               }">${formatPercent(data.analysis?.deal_score ?? null)}</span></div>
             `
@@ -463,7 +501,7 @@ function renderPanel(data: {
           ? `
             <div class="divider"></div>
             <div class="card comps">
-              <div class="section-title">Closest comps</div>
+              <div class="section-title">Vergleichbare Anzeigen</div>
               <ul>
                 ${comparables
                   .map(
@@ -474,11 +512,11 @@ function renderPanel(data: {
                         comp.mileage_km ? comp.mileage_km.toLocaleString('de-AT') + ' km' : '—'
                       } · ${comp.ps ? comp.ps + ' PS' : '—'}<span class="last-viewed">${
                         comp.captured_at
-                          ? `Last viewed ${new Date(comp.captured_at).toLocaleString('de-AT', {
+                          ? `Zuletzt gesehen ${new Date(comp.captured_at).toLocaleString('de-AT', {
                               dateStyle: 'medium',
                               timeStyle: 'short',
                             })}`
-                          : 'Last viewed —'
+                          : 'Zuletzt gesehen —'
                       }</span></span></li>`,
                   )
                   .join('')}
@@ -492,7 +530,7 @@ function renderPanel(data: {
           ? `
             <div class="divider"></div>
             <div class="card alternatives">
-              <div class="section-title">Cheaper alternatives</div>
+              <div class="section-title">Günstigere Alternativen</div>
               <ul>
                 ${cheaperAlternatives
                   .slice(0, 5)
@@ -504,11 +542,11 @@ function renderPanel(data: {
                         comp.mileage_km ? comp.mileage_km.toLocaleString('de-AT') + ' km' : '—'
                       } · ${comp.ps ? comp.ps + ' PS' : '—'}<span class="last-viewed">${
                         comp.captured_at
-                          ? `Last viewed ${new Date(comp.captured_at).toLocaleString('de-AT', {
+                          ? `Zuletzt gesehen ${new Date(comp.captured_at).toLocaleString('de-AT', {
                               dateStyle: 'medium',
                               timeStyle: 'short',
                             })}`
-                          : 'Last viewed —'
+                          : 'Zuletzt gesehen —'
                       }</span></span></li>`,
                   )
                   .join('')}
@@ -522,7 +560,7 @@ function renderPanel(data: {
           ? `
             <div class="divider"></div>
             <div class="card">
-              <div class="section-title">Price history</div>
+              <div class="section-title">Preishistorie</div>
               <ul>
                 ${data.price_history
                   .slice(-2)
@@ -681,11 +719,11 @@ function findDetailPriceElement(): HTMLElement | null {
 }
 
 function getBadgeLabel(dealScore: number | null, notEnough: boolean): { label: string; className: string } {
-  if (notEnough || dealScore === null) return { label: 'N/A', className: 'na' };
-  if (dealScore >= 0.1) return { label: 'Great', className: 'great' };
-  if (dealScore >= 0.03) return { label: 'Good', className: 'good' };
-  if (dealScore >= -0.03) return { label: 'Fair', className: 'fair' };
-  return { label: 'Overpriced', className: 'overpriced' };
+  if (notEnough || dealScore === null) return { label: 'k.A.', className: 'na' };
+  if (dealScore >= 0.1) return { label: 'Top', className: 'great' };
+  if (dealScore >= 0.03) return { label: 'Gut', className: 'good' };
+  if (dealScore >= -0.03) return { label: 'Okay', className: 'fair' };
+  return { label: 'Zu teuer', className: 'overpriced' };
 }
 
 async function renderBadgesForSearch(): Promise<void> {
@@ -740,7 +778,7 @@ async function renderBadgesForSearch(): Promise<void> {
       const diff = formatPercent(analysis.diff_pct ?? null);
       badge.setAttribute(
         'data-tooltip',
-        `Expected: ${expected}\nDiff: ${diff}\nComps: ${analysis.comparables_count}`,
+        `Erwartet: ${expected}\nAbw.: ${diff}\nVergl.: ${analysis.comparables_count}`,
       );
     }
     priceEl.appendChild(badge);
@@ -840,7 +878,7 @@ async function renderDetailPriceBadge(): Promise<void> {
   badge.textContent = label;
   const expected = formatEur(analysis.expected_price ?? null);
   const diff = formatPercent(analysis.diff_pct ?? null);
-  badge.setAttribute('data-tooltip', `Expected: ${expected}\nDiff: ${diff}\nComps: ${analysis.comparables_count}`);
+  badge.setAttribute('data-tooltip', `Erwartet: ${expected}\nAbw.: ${diff}\nVergl.: ${analysis.comparables_count}`);
   if (labelEl) {
     const container =
       labelEl.closest('[data-testid="contact-box-price-box"]') ??
@@ -870,7 +908,7 @@ async function renderPanelForDetail(): Promise<void> {
   const hasYear = !!response.listing.year;
   const hasMileage = !!response.listing.mileage_km;
   const confidence =
-    comps >= 25 && hasYear && hasMileage ? 'High' : comps >= 10 && (hasYear || hasMileage) ? 'Medium' : 'Low';
+    comps >= 25 && hasYear && hasMileage ? 'Hoch' : comps >= 10 && (hasYear || hasMileage) ? 'Mittel' : 'Niedrig';
   renderPanel({
     url: response.listing.url,
     title: response.listing.title,

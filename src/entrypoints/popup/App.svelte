@@ -36,9 +36,9 @@
     const comps = analysis.comparables_count;
     const hasYear = !!activeListing.year;
     const hasMileage = !!activeListing.mileage_km;
-    if (comps >= 25 && hasYear && hasMileage) return 'High';
-    if (comps >= 10 && (hasYear || hasMileage)) return 'Medium';
-    return 'Low';
+    if (comps >= 25 && hasYear && hasMileage) return `Hoch (${comps})`;
+    if (comps >= 10 && (hasYear || hasMileage)) return `Mittel (${comps})`;
+    return `Niedrig (${comps})`;
   }
 
   function formatDate(value: string | null): string {
@@ -103,14 +103,14 @@
   }
 
   async function clearAllData() {
-    if (!window.confirm('Clear all stored listings? This cannot be undone.')) return;
+    if (!window.confirm('Alle gespeicherten Anzeigen löschen? Das kann nicht rückgängig gemacht werden.')) return;
     await browser.runtime.sendMessage({ type: 'clear_all' });
     await loadData();
   }
 
   async function deleteCurrentListing() {
     if (!activeListing) return;
-    if (!window.confirm('Delete the current listing from storage?')) return;
+    if (!window.confirm('Aktuelle Anzeige aus dem Speicher löschen?')) return;
     await browser.runtime.sendMessage({ type: 'delete_listing', id: activeListing.id });
     await loadData();
   }
@@ -118,10 +118,10 @@
   async function pruneOlderThan() {
     const days = Number(pruneDays);
     if (!Number.isFinite(days) || days <= 0) {
-      statusMessage = 'Enter a valid number of days for pruning.';
+      statusMessage = 'Bitte eine gültige Anzahl an Tagen für die Bereinigung eingeben.';
       return;
     }
-    if (!window.confirm(`Delete listings last captured more than ${days} days ago?`)) return;
+    if (!window.confirm(`Anzeigen löschen, die vor mehr als ${days} Tagen erfasst wurden?`)) return;
     await browser.runtime.sendMessage({ type: 'prune_older_than', days });
     await loadData();
   }
@@ -133,12 +133,12 @@
 
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) {
-      statusMessage = 'Open a willhaben.at listing to see deal insights.';
+      statusMessage = 'Öffne eine willhaben.at-Anzeige, um die Analyse zu sehen.';
       return;
     }
     isDetailPage = tab.url.includes('willhaben.at') && new URL(tab.url).pathname.startsWith('/iad/');
     if (!isDetailPage) {
-      statusMessage = 'Open a willhaben.at listing detail page to see deal insights.';
+      statusMessage = 'Öffne eine willhaben.at-Anzeigedetailseite, um die Analyse zu sehen.';
       return;
     }
     const id = canonicalizeUrl(tab.url);
@@ -151,7 +151,7 @@
     activeListing = response?.listing ?? null;
     analysis = response?.analysis ?? null;
     if (!activeListing) {
-      statusMessage = 'Listing not captured yet. Refresh the page and try again.';
+      statusMessage = 'Anzeige noch nicht erfasst. Seite neu laden und erneut versuchen.';
     }
   }
 
@@ -167,37 +167,37 @@
         <img src="/icon/128.png" alt="DealGauge" />
         <h1>DealGauge</h1>
       </div>
-      <p>Willhaben car deal check</p>
+      <p>Willhaben Auto-Preischeck</p>
     </div>
     <div class="metric">
-      <span class="metric-label">Stored listings</span>
+      <span class="metric-label">Gespeicherte Anzeigen</span>
       <span class="metric-value">{totalCount}</span>
     </div>
   </header>
   <section class="freshness">
-    <span class="label">Last captured</span>
+    <span class="label">Zuletzt erfasst</span>
     <span class="value">{formatDate(datasetLastCaptured)}</span>
   </section>
 
   <section class="analysis">
     <div class="metric-row">
-      <span class="label">Data actions</span>
+      <span class="label">Datenaktionen</span>
     </div>
     <div class="action-row">
-      <button class="action danger" on:click={clearAllData}>Clear all data</button>
-      <button class="action" on:click={deleteCurrentListing} disabled={!activeListing}>Delete current listing</button>
+      <button class="action danger" on:click={clearAllData}>Alle Daten löschen</button>
+      <button class="action" on:click={deleteCurrentListing} disabled={!activeListing}>Aktuelle Anzeige löschen</button>
     </div>
     <div class="action-row">
-      <button class="action" on:click={() => downloadData('json')}>Export JSON</button>
-      <button class="action" on:click={() => downloadData('csv')}>Export CSV</button>
+      <button class="action" on:click={() => downloadData('json')}>JSON exportieren</button>
+      <button class="action" on:click={() => downloadData('csv')}>CSV exportieren</button>
     </div>
     <div class="action-row">
       <label class="inline-input">
-        <span>Prune older than</span>
+        <span>Älter als</span>
         <input type="number" min="1" bind:value={pruneDays} />
-        <span>days</span>
+        <span>Tage</span>
       </label>
-      <button class="action" on:click={pruneOlderThan}>Prune</button>
+      <button class="action" on:click={pruneOlderThan}>Bereinigen</button>
     </div>
   </section>
 
@@ -209,15 +209,15 @@
       <div class="price">{formatEur(activeListing.price_eur)}</div>
       <div class="grid">
         <div>
-          <span class="label">Brand</span>
+          <span class="label">Marke</span>
           <span class="value">{formatText(activeListing.brand)}</span>
         </div>
         <div>
-          <span class="label">Model</span>
+          <span class="label">Modell</span>
           <span class="value">{formatText(activeListing.model)}</span>
         </div>
         <div>
-          <span class="label">Trim</span>
+          <span class="label">Ausstattung</span>
           <span class="value">{formatText(activeListing.trim)}</span>
         </div>
         <div>
@@ -255,28 +255,28 @@
 
     <section class="analysis">
       <div class="metric-row">
-        <span class="label">Comparables</span>
+        <span class="label">Vergleichbare Anzeigen</span>
         <span class="value">{analysis?.comparables_count ?? 0}</span>
       </div>
       <div class="metric-row">
-        <span class="label">Confidence</span>
+        <span class="label">Datenbasis</span>
         <span class="value">{confidenceLabel()}</span>
       </div>
       {#if analysis?.not_enough_data}
-        <div class="insufficient">Not enough data (need 10+ comparable cars).</div>
+        <div class="insufficient">Nicht genug Daten (mind. 10 vergleichbare Anzeigen nötig).</div>
       {:else}
         <div class="metric-row">
-          <span class="label">Expected price</span>
+          <span class="label">Erwarteter Preis</span>
           <span class="value">{formatEur(analysis?.expected_price ?? null)}</span>
         </div>
         <div class="metric-row">
-          <span class="label">Difference</span>
+          <span class="label">Abweichung</span>
           <span class="value">
             {formatEur(analysis?.diff_eur ?? null)} ({formatPercent(analysis?.diff_pct ?? null)})
           </span>
         </div>
         <div class="score">
-          <span>Deal score</span>
+          <span>Angebots-Score</span>
           <strong class:positive={(analysis?.deal_score ?? 0) > 0} class:negative={(analysis?.deal_score ?? 0) < 0}>
             {formatPercent(analysis?.deal_score ?? null)}
           </strong>
@@ -286,7 +286,7 @@
 
     <section class="comps">
       <div class="metric-row">
-        <span class="label">Closest comparables</span>
+        <span class="label">Vergleichbare Anzeigen</span>
       </div>
       {#if analysis?.comparables?.length}
         <ul>
@@ -304,13 +304,13 @@
           {/each}
         </ul>
       {:else}
-        <div class="muted">No comparables yet.</div>
+        <div class="muted">Noch keine Vergleiche.</div>
       {/if}
     </section>
 
     <section class="history">
       <div class="metric-row">
-        <span class="label">Price history</span>
+        <span class="label">Preishistorie</span>
       </div>
       {#if activeListing.price_history?.length}
         <ul>
@@ -322,7 +322,7 @@
           {/each}
         </ul>
       {:else}
-        <div class="muted">No price changes yet.</div>
+        <div class="muted">Noch keine Preisänderungen.</div>
       {/if}
     </section>
   {/if}
