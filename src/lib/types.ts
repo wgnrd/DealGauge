@@ -22,6 +22,20 @@ export type Listing = {
 
 export type ListingsMap = Record<string, Listing>;
 
+export type AnalysisFilters = {
+  matchFuel: boolean;
+  matchDrivetrain: boolean;
+  matchTransmission: boolean;
+};
+
+export function defaultAnalysisFilters(): AnalysisFilters {
+  return {
+    matchFuel: false,
+    matchDrivetrain: false,
+    matchTransmission: false,
+  };
+}
+
 export type Analysis = {
   expected_price: number | null;
   diff_eur: number | null;
@@ -30,4 +44,5 @@ export type Analysis = {
   comparables_count: number;
   comparables: Listing[];
   not_enough_data: boolean;
+  applied_filters: AnalysisFilters;
 };
