@@ -9,9 +9,11 @@ import {
   parseYear,
   normalizeText,
 } from '../lib/parse';
-import type { Analysis, Listing } from '../lib/types';
+import { defaultAnalysisFilters } from '../lib/types';
+import type { Analysis, AnalysisFilters, Listing } from '../lib/types';
 
 type CaptureMessage = { type: 'capture_now' };
+const ANALYSIS_FILTERS_STORAGE_KEY = 'dealgauge_analysis_filters_v1';
 
 function isDetailPage(): boolean {
   return location.pathname.startsWith('/iad/') && location.pathname.includes('/d/');
@@ -150,6 +152,15 @@ function extractCardTeaserAttributes(card: Element): Array<{ value: string; labe
   return attributes;
 }
 
+function extractCardAttributeValue(card: Element, labelNeedles: string[]): string | null {
+  const attrs = extractCardTeaserAttributes(card);
+  const match = attrs.find((attr) => {
+    const label = normalizeText(attr.label);
+    return labelNeedles.some((needle) => label.includes(needle));
+  });
+  return match?.value?.trim() ?? null;
+}
+
 function extractCardYear(card: Element): number | null {
   const attrs = extractCardTeaserAttributes(card);
   const ezAttr = attrs.find((attr) => {
@@ -191,6 +202,18 @@ function extractCardPs(card: Element): number | null {
   return parsePowerPs(text);
 }
 
+function extractCardFuel(card: Element): string | null {
+  return extractCardAttributeValue(card, ['treibstoff', 'kraftstoff']);
+}
+
+function extractCardDrivetrain(card: Element): string | null {
+  return extractCardAttributeValue(card, ['antrieb']);
+}
+
+function extractCardTransmission(card: Element): string | null {
+  return extractCardAttributeValue(card, ['getriebe', 'getriebeart']);
+}
+
 function extractSearchListings(): Listing[] {
   if (!isWillhaben()) return [];
   const anchors = Array.from(document.querySelectorAll('a[href*="/iad/"]')) as HTMLAnchorElement[];
@@ -210,6 +233,9 @@ function extractSearchListings(): Listing[] {
     const year = card ? extractCardYear(card) : null;
     const mileage_km = card ? extractCardMileage(card) : null;
     const ps = card ? extractCardPs(card) : null;
+    const fuel = card ? extractCardFuel(card) : null;
+    const drivetrain = card ? extractCardDrivetrain(card) : null;
+    const transmission = card ? extractCardTransmission(card) : null;
     const capturedAt = nowIso();
     const classified = classifyFromTitle(title);
     listings.push({
@@ -225,9 +251,9 @@ function extractSearchListings(): Listing[] {
       mileage_km,
       ps,
       erstzulassung: null,
-      fuel: null,
-      drivetrain: null,
-      transmission: null,
+      fuel,
+      drivetrain,
+      transmission,
       captured_at: capturedAt,
       source: 'search',
     });
@@ -262,6 +288,36 @@ function formatPercent(value: number | null): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function sanitizeAnalysisFilters(filters: Partial<AnalysisFilters> | null | undefined): AnalysisFilters {
+  const defaults = defaultAnalysisFilters();
+  if (!filters) return defaults;
+  return {
+    matchFuel: filters.matchFuel === true,
+    matchDrivetrain: filters.matchDrivetrain === true,
+    matchTransmission: filters.matchTransmission === true,
+  };
+}
+
+function serializeAnalysisFilters(filters: AnalysisFilters): string {
+  return `${filters.matchFuel ? 1 : 0}${filters.matchDrivetrain ? 1 : 0}${filters.matchTransmission ? 1 : 0}`;
+}
+
+let currentAnalysisFilters: AnalysisFilters = defaultAnalysisFilters();
+
+async function loadAnalysisFiltersFromStorage(): Promise<void> {
+  const stored = await browser.storage.local.get(ANALYSIS_FILTERS_STORAGE_KEY);
+  currentAnalysisFilters = sanitizeAnalysisFilters(
+    stored?.[ANALYSIS_FILTERS_STORAGE_KEY] as Partial<AnalysisFilters> | undefined,
+  );
+}
+
+async function saveAnalysisFilters(filters: AnalysisFilters): Promise<void> {
+  currentAnalysisFilters = sanitizeAnalysisFilters(filters);
+  await browser.storage.local.set({
+    [ANALYSIS_FILTERS_STORAGE_KEY]: currentAnalysisFilters,
+  });
+}
+
 let panelHost: HTMLElement | null = null;
 const SEARCH_ANALYSIS_TTL_MS = 60_000;
 type SearchAnalyses = Array<{ id: string; analysis: Analysis | null }>;
@@ -274,9 +330,9 @@ let searchAnalysisCache: SearchAnalysisCache | null = null;
 let searchAnalysisInFlight: { key: string; promise: Promise<SearchAnalyses | null> } | null = null;
 let searchAnalysisGeneration = 0;
 
-function buildSearchAnalysisKey(pageUrl: string, listingIds: string[]): string {
+function buildSearchAnalysisKey(pageUrl: string, listingIds: string[], filters: AnalysisFilters): string {
   const sortedIds = [...listingIds].sort();
-  return `${pageUrl}|${sortedIds.join(',')}`;
+  return `${pageUrl}|${serializeAnalysisFilters(filters)}|${sortedIds.join(',')}`;
 }
 
 function isSearchAnalysisCacheValid(cache: SearchAnalysisCache | null, key: string): cache is SearchAnalysisCache {
@@ -285,7 +341,7 @@ function isSearchAnalysisCacheValid(cache: SearchAnalysisCache | null, key: stri
   return Date.now() - cache.timestamp <= SEARCH_ANALYSIS_TTL_MS;
 }
 
-async function getSearchAnalyses(key: string, listings: Listing[]): Promise<SearchAnalyses | null> {
+async function getSearchAnalyses(key: string, listings: Listing[], filters: AnalysisFilters): Promise<SearchAnalyses | null> {
   if (isSearchAnalysisCacheValid(searchAnalysisCache, key)) {
     return searchAnalysisCache.analyses;
   }
@@ -294,7 +350,7 @@ async function getSearchAnalyses(key: string, listings: Listing[]): Promise<Sear
   }
   const generation = searchAnalysisGeneration;
   const request = browser.runtime
-    .sendMessage({ type: 'analyze_listings', listings })
+    .sendMessage({ type: 'analyze_listings', listings, filters })
     .then((response) => {
       if (searchAnalysisGeneration !== generation) return null;
       if (!response?.analyses) return null;
@@ -346,16 +402,7 @@ function renderPanel(data: {
   fuel: string | null;
   drivetrain: string | null;
   transmission: string | null;
-  analysis:
-    | {
-        expected_price: number | null;
-        diff_eur: number | null;
-        diff_pct: number | null;
-        deal_score: number | null;
-        comparables_count: number;
-        not_enough_data: boolean;
-      }
-    | null;
+  analysis: Analysis | null;
   last_captured: string | null;
   price_history: Array<{ price_eur: number; captured_at: string }>;
   confidence: string;
@@ -368,6 +415,8 @@ function renderPanel(data: {
   );
   const detailsCollapsed =
     (window.localStorage.getItem('dealgauge_panel_details_collapsed') ?? 'true') === 'true';
+  const filtersCollapsed =
+    (window.localStorage.getItem('dealgauge_panel_filters_collapsed') ?? 'true') === 'true';
   const root = ensurePanelRoot();
   root.innerHTML = `
     <style>
@@ -398,6 +447,7 @@ function renderPanel(data: {
       }
       .close:hover { background: rgba(0,0,0,0.06); }
       .price-row { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
+      .price-row.clickable { cursor: pointer; }
       .price { font-size: 18px; font-weight: 600; }
       .toggle {
         all: unset;
@@ -443,12 +493,17 @@ function renderPanel(data: {
       .card.alternatives .muted { font-size: 12.5px; }
       .card.details.collapsed .details-body { display: none; }
       .card.details.collapsed .price-row { margin: 4px 0; }
+      .card.filters.collapsed .filters-body { display: none; }
+      .card.filters .filters-header { display: flex; justify-content: space-between; align-items: center; }
+      .filters { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+      .filter-item { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: #1d1b16; }
+      .filter-item input { accent-color: #6a5f53; margin: 0; }
       .divider { border-top: 1px solid rgba(29, 27, 22, 0.08); margin: 10px 0; }
     </style>
     <div class="panel" role="dialog" aria-label="DealGauge">
       <div class="header" data-drag-handle="true">
         <div class="brand">
-          <img src="${browser.runtime.getURL('icon/128.png')}" alt="DealGauge" />
+          <img src="${browser.runtime.getURL('/icon/128.png')}" alt="DealGauge" />
           <div>
             <div class="title">DealGauge</div>
           <div class="subtitle">${data.title ?? 'Anzeige'}</div>
@@ -457,7 +512,7 @@ function renderPanel(data: {
         <button class="close" aria-label="Schließen">×</button>
       </div>
       <div class="card details${detailsCollapsed ? ' collapsed' : ''}">
-        <div class="price-row">
+        <div class="price-row clickable" data-toggle-details-row="true">
           <div class="price">${formatEur(data.price_eur)}</div>
           <button class="toggle" data-toggle-details="true" aria-label="Details ein-/ausblenden">${
             detailsCollapsed ? '▸' : '▾'
@@ -577,6 +632,31 @@ function renderPanel(data: {
           `
           : ''
       }
+      <div class="divider"></div>
+      <div class="card filters${filtersCollapsed ? ' collapsed' : ''}">
+        <div class="filters-header" data-toggle-filters-row="true">
+          <div class="section-title">Filter Vergleichsmenge</div>
+          <button class="toggle" data-toggle-filters="true" aria-label="Filter ein-/ausblenden">${
+            filtersCollapsed ? '▸' : '▾'
+          }</button>
+        </div>
+        <div class="filters-body">
+          <div class="filters">
+            <label class="filter-item">
+              <input type="checkbox" data-filter-key="matchFuel" ${currentAnalysisFilters.matchFuel ? 'checked' : ''} />
+              <span>Nur gleicher Treibstoff</span>
+            </label>
+            <label class="filter-item">
+              <input type="checkbox" data-filter-key="matchDrivetrain" ${currentAnalysisFilters.matchDrivetrain ? 'checked' : ''} />
+              <span>Nur gleicher Antrieb</span>
+            </label>
+            <label class="filter-item">
+              <input type="checkbox" data-filter-key="matchTransmission" ${currentAnalysisFilters.matchTransmission ? 'checked' : ''} />
+              <span>Nur gleiche Getriebeart</span>
+            </label>
+          </div>
+        </div>
+      </div>
     </div>
   `;
   const closeButton = root.querySelector('.close') as HTMLButtonElement | null;
@@ -585,16 +665,44 @@ function renderPanel(data: {
   });
 
   const toggleButton = root.querySelector('[data-toggle-details="true"]') as HTMLButtonElement | null;
+  const detailsRow = root.querySelector('[data-toggle-details-row="true"]') as HTMLElement | null;
+  const toggleDetails = () => {
+    const card = root.querySelector('.card.details') as HTMLElement | null;
+    if (!card || !toggleButton) return;
+    const nextCollapsed = !card.classList.contains('collapsed');
+    card.classList.toggle('collapsed', nextCollapsed);
+    toggleButton.textContent = nextCollapsed ? '▸' : '▾';
+    window.localStorage.setItem('dealgauge_panel_details_collapsed', String(nextCollapsed));
+  };
   if (toggleButton) {
-    toggleButton.addEventListener('click', () => {
-      const card = root.querySelector('.card.details') as HTMLElement | null;
-      if (!card) return;
-      const nextCollapsed = !card.classList.contains('collapsed');
-      card.classList.toggle('collapsed', nextCollapsed);
-      toggleButton.textContent = nextCollapsed ? '▸' : '▾';
-      window.localStorage.setItem('dealgauge_panel_details_collapsed', String(nextCollapsed));
+    toggleButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleDetails();
     });
   }
+  detailsRow?.addEventListener('click', () => {
+    toggleDetails();
+  });
+
+  const filtersToggleButton = root.querySelector('[data-toggle-filters="true"]') as HTMLButtonElement | null;
+  const filtersRow = root.querySelector('[data-toggle-filters-row="true"]') as HTMLElement | null;
+  const toggleFilters = () => {
+    const card = root.querySelector('.card.filters') as HTMLElement | null;
+    if (!card || !filtersToggleButton) return;
+    const nextCollapsed = !card.classList.contains('collapsed');
+    card.classList.toggle('collapsed', nextCollapsed);
+    filtersToggleButton.textContent = nextCollapsed ? '▸' : '▾';
+    window.localStorage.setItem('dealgauge_panel_filters_collapsed', String(nextCollapsed));
+  };
+  if (filtersToggleButton) {
+    filtersToggleButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleFilters();
+    });
+  }
+  filtersRow?.addEventListener('click', () => {
+    toggleFilters();
+  });
 
   const handle = root.querySelector('[data-drag-handle="true"]') as HTMLElement | null;
   if (handle) {
@@ -635,6 +743,25 @@ function renderPanel(data: {
       };
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+    });
+  }
+
+  const filterCheckboxes = Array.from(
+    root.querySelectorAll('input[data-filter-key]'),
+  ) as HTMLInputElement[];
+  for (const checkbox of filterCheckboxes) {
+    checkbox.addEventListener('change', async () => {
+      const key = checkbox.getAttribute('data-filter-key') as keyof AnalysisFilters | null;
+      if (!key) return;
+      const nextFilters: AnalysisFilters = {
+        ...currentAnalysisFilters,
+        [key]: checkbox.checked,
+      };
+      await saveAnalysisFilters(nextFilters);
+      resetSearchAnalysisCache();
+      await renderPanelForDetail();
+      await renderDetailPriceBadge();
+      await renderBadgesForSearch();
     });
   }
 }
@@ -709,9 +836,9 @@ function findDetailPriceElement(): HTMLElement | null {
   if (labelEl) {
     const container = labelEl.closest('section, div, li') ?? labelEl.parentElement;
     if (container) {
-      const valueEl = Array.from(container.querySelectorAll('span, div, p'))
+      const valueEl = (Array.from(container.querySelectorAll('span, div, p')) as HTMLElement[])
         .reverse()
-        .find((el) => /€/.test(el.innerText ?? '')) as HTMLElement | undefined;
+        .find((el) => /€/.test(el.innerText ?? ''));
       if (valueEl) return valueEl;
     }
   }
@@ -734,8 +861,9 @@ async function renderBadgesForSearch(): Promise<void> {
   const key = buildSearchAnalysisKey(
     location.href,
     searchListings.map((listing) => listing.id),
+    currentAnalysisFilters,
   );
-  const analyses = await getSearchAnalyses(key, searchListings);
+  const analyses = await getSearchAnalyses(key, searchListings, currentAnalysisFilters);
   if (!analyses) return;
 
   const analysisMap = new Map<
@@ -858,7 +986,7 @@ async function renderDetailPriceBadge(): Promise<void> {
   if (!isDetailPage() || !isWillhaben()) return;
   ensureBadgeStyles();
   const id = canonicalizeUrl(location.href);
-  const response = await browser.runtime.sendMessage({ type: 'get_analysis', id });
+  const response = await browser.runtime.sendMessage({ type: 'get_analysis', id, filters: currentAnalysisFilters });
   if (!response?.analysis) return;
   document.querySelectorAll('[data-dealgauge-detail-badge="true"]').forEach((el) => el.remove());
   const priceEl = findDetailPriceElement();
@@ -880,10 +1008,11 @@ async function renderDetailPriceBadge(): Promise<void> {
   const diff = formatPercent(analysis.diff_pct ?? null);
   badge.setAttribute('data-tooltip', `Erwartet: ${expected}\nAbw.: ${diff}\nVergl.: ${analysis.comparables_count}`);
   if (labelEl) {
-    const container =
+    const container = (
       labelEl.closest('[data-testid="contact-box-price-box"]') ??
       labelEl.parentElement ??
-      labelEl;
+      labelEl
+    ) as HTMLElement;
     container.style.display = 'inline-flex';
     container.style.alignItems = 'center';
     container.style.gap = '8px';
@@ -901,7 +1030,7 @@ async function renderDetailPriceBadge(): Promise<void> {
 async function renderPanelForDetail(): Promise<void> {
   if (!isDetailPage() || !isWillhaben()) return;
   const id = canonicalizeUrl(location.href);
-  const response = await browser.runtime.sendMessage({ type: 'get_analysis', id });
+  const response = await browser.runtime.sendMessage({ type: 'get_analysis', id, filters: currentAnalysisFilters });
   const countResponse = await browser.runtime.sendMessage({ type: 'get_count' });
   if (!response?.listing) return;
   const comps = response.analysis?.comparables_count ?? 0;
@@ -946,13 +1075,15 @@ async function renderPanelForDetail(): Promise<void> {
 export default defineContentScript({
   matches: ['https://www.willhaben.at/*'],
   main() {
-    capture().then(() => {
-      renderPanelForDetail();
-      renderDetailPriceBadge();
-      renderBadgesForSearch();
-      observeListingChanges();
-      observeDetailBadgeChanges();
-      observeRouteChanges();
+    loadAnalysisFiltersFromStorage().then(() => {
+      capture().then(() => {
+        renderPanelForDetail();
+        renderDetailPriceBadge();
+        renderBadgesForSearch();
+        observeListingChanges();
+        observeDetailBadgeChanges();
+        observeRouteChanges();
+      });
     });
     browser.runtime.onMessage.addListener((message: CaptureMessage) => {
       if (message?.type === 'capture_now') {

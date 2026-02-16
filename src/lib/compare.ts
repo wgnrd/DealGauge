@@ -1,5 +1,6 @@
 import { canonicalizeUrl, normalizeText } from './parse';
-import type { Analysis, Listing, ListingsMap } from './types';
+import { defaultAnalysisFilters } from './types';
+import type { Analysis, AnalysisFilters, Listing, ListingsMap } from './types';
 
 const MIN_COMPARABLES_FOR_WEIGHTED_ESTIMATE = 10;
 const TRIM_PERCENT = 0.1;
@@ -61,7 +62,22 @@ function weightedExpectedPrice(target: Listing, comparables: Listing[]): number 
   return weightedSum / weightTotal;
 }
 
-export function findComparables(target: Listing, listings: ListingsMap): Listing[] {
+function matchesStrictAttribute(targetValue: string | null, comparableValue: string | null): boolean {
+  if (!targetValue || !comparableValue) return false;
+  return normalizeText(targetValue) === normalizeText(comparableValue);
+}
+
+function matchesActiveFilters(target: Listing, comparable: Listing, filters: AnalysisFilters): boolean {
+  const hasTechnicalFilter = filters.matchFuel || filters.matchDrivetrain || filters.matchTransmission;
+  if (hasTechnicalFilter && comparable.source !== 'detail') return false;
+  if (filters.matchFuel && !matchesStrictAttribute(target.fuel, comparable.fuel)) return false;
+  if (filters.matchDrivetrain && !matchesStrictAttribute(target.drivetrain, comparable.drivetrain)) return false;
+  if (filters.matchTransmission && !matchesStrictAttribute(target.transmission, comparable.transmission)) return false;
+  return true;
+}
+
+export function findComparables(target: Listing, listings: ListingsMap, filters?: AnalysisFilters): Listing[] {
+  const activeFilters = filters ?? defaultAnalysisFilters();
   const targetCanonicalUrl = canonicalizeUrl(target.url ?? '');
   const targetNumericId = extractNumericListingId(target.id) ?? extractNumericListingId(target.url);
   return Object.values(listings).filter((item) => {
@@ -72,10 +88,7 @@ export function findComparables(target: Listing, listings: ListingsMap): Listing
     if (!item.brand || !item.model || !target.brand || !target.model) return false;
     if (item.brand !== target.brand || item.model !== target.model) return false;
     if ((item.trim ?? null) !== (target.trim ?? null)) return false;
-
-    if (item.drivetrain && target.drivetrain) {
-      if (normalizeText(item.drivetrain) !== normalizeText(target.drivetrain)) return false;
-    }
+    if (!matchesActiveFilters(target, item, activeFilters)) return false;
 
     if (item.year && target.year) {
       if (Math.abs(item.year - target.year) > 2) return false;
@@ -95,8 +108,9 @@ export function findComparables(target: Listing, listings: ListingsMap): Listing
   });
 }
 
-export function analyzeListing(target: Listing, listings: ListingsMap): Analysis {
-  const comparables = findComparables(target, listings);
+export function analyzeListing(target: Listing, listings: ListingsMap, filters?: AnalysisFilters): Analysis {
+  const appliedFilters = filters ?? defaultAnalysisFilters();
+  const comparables = findComparables(target, listings, appliedFilters);
   const pricedComparables = comparables.filter((item): item is Listing & { price_eur: number } => item.price_eur !== null);
   const prices = pricedComparables
     .map((item) => item.price_eur)
@@ -130,6 +144,7 @@ export function analyzeListing(target: Listing, listings: ListingsMap): Analysis
       comparables_count: comparables.length,
       comparables: ranked.slice(0, 5),
       not_enough_data: true,
+      applied_filters: appliedFilters,
     };
   }
   const targetPrice = target.price_eur as number;
@@ -143,5 +158,6 @@ export function analyzeListing(target: Listing, listings: ListingsMap): Analysis
     comparables_count: comparables.length,
     comparables: ranked.slice(0, 5),
     not_enough_data: false,
+    applied_filters: appliedFilters,
   };
 }

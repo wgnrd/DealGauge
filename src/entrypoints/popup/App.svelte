@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { Analysis, Listing } from '../../lib/types';
+  import { defaultAnalysisFilters } from '../../lib/types';
+  import type { Analysis, AnalysisFilters, Listing } from '../../lib/types';
   import { canonicalizeUrl } from '../../lib/parse';
 
   let totalCount = 0;
@@ -10,6 +11,10 @@
   let isDetailPage = false;
   let datasetLastCaptured: string | null = null;
   let pruneDays = 30;
+  const ANALYSIS_FILTERS_STORAGE_KEY = 'dealgauge_analysis_filters_v1';
+  const FILTERS_COLLAPSED_STORAGE_KEY = 'dealgauge_popup_filters_collapsed_v1';
+  let analysisFilters: AnalysisFilters = defaultAnalysisFilters();
+  let filtersCollapsed = true;
 
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -65,7 +70,45 @@
 
   function visibleComparables(): Listing[] {
     if (!analysis?.comparables?.length || !activeListing) return [];
-    return analysis.comparables.filter((comp) => !isSameListing(comp, activeListing));
+    const listing = activeListing;
+    return analysis.comparables.filter((comp) => !isSameListing(comp, listing));
+  }
+
+  function sanitizeAnalysisFilters(filters: Partial<AnalysisFilters> | null | undefined): AnalysisFilters {
+    const defaults = defaultAnalysisFilters();
+    if (!filters) return defaults;
+    return {
+      matchFuel: filters.matchFuel === true,
+      matchDrivetrain: filters.matchDrivetrain === true,
+      matchTransmission: filters.matchTransmission === true,
+    };
+  }
+
+  async function loadAnalysisFilters(): Promise<void> {
+    const stored = await browser.storage.local.get(ANALYSIS_FILTERS_STORAGE_KEY);
+    analysisFilters = sanitizeAnalysisFilters(stored?.[ANALYSIS_FILTERS_STORAGE_KEY] as Partial<AnalysisFilters> | undefined);
+  }
+
+  async function saveAnalysisFilters(): Promise<void> {
+    analysisFilters = sanitizeAnalysisFilters(analysisFilters);
+    await browser.storage.local.set({
+      [ANALYSIS_FILTERS_STORAGE_KEY]: analysisFilters,
+    });
+  }
+
+  async function onFilterChange(): Promise<void> {
+    await saveAnalysisFilters();
+    await loadData();
+  }
+
+  function loadFiltersCollapsed(): void {
+    const value = window.localStorage.getItem(FILTERS_COLLAPSED_STORAGE_KEY);
+    filtersCollapsed = value === null ? true : value === 'true';
+  }
+
+  function toggleFiltersCollapsed(): void {
+    filtersCollapsed = !filtersCollapsed;
+    window.localStorage.setItem(FILTERS_COLLAPSED_STORAGE_KEY, String(filtersCollapsed));
   }
 
   async function downloadData(kind: 'json' | 'csv') {
@@ -123,7 +166,7 @@
   }
 
   async function openImportDialog() {
-    const url = browser.runtime.getURL('import.html');
+    const url = browser.runtime.getURL('/import.html');
     await browser.tabs.create({ url });
     window.close();
   }
@@ -153,6 +196,7 @@
   }
 
   async function loadData() {
+    await loadAnalysisFilters();
     const countResponse = await browser.runtime.sendMessage({ type: 'get_count' });
     totalCount = countResponse?.count ?? 0;
     datasetLastCaptured = countResponse?.last_captured ?? null;
@@ -160,19 +204,24 @@
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) {
       statusMessage = 'Öffne eine willhaben.at-Anzeige, um die Analyse zu sehen.';
+      activeListing = null;
+      analysis = null;
       return;
     }
     isDetailPage = tab.url.includes('willhaben.at') && new URL(tab.url).pathname.startsWith('/iad/');
     if (!isDetailPage) {
       statusMessage = 'Öffne eine willhaben.at-Anzeigedetailseite, um die Analyse zu sehen.';
+      activeListing = null;
+      analysis = null;
       return;
     }
+    statusMessage = null;
     const id = canonicalizeUrl(tab.url);
-    let response = await browser.runtime.sendMessage({ type: 'get_analysis', id });
+    let response = await browser.runtime.sendMessage({ type: 'get_analysis', id, filters: analysisFilters });
     if (!response?.listing && tab.id) {
       await browser.tabs.sendMessage(tab.id, { type: 'capture_now' });
       await wait(300);
-      response = await browser.runtime.sendMessage({ type: 'get_analysis', id });
+      response = await browser.runtime.sendMessage({ type: 'get_analysis', id, filters: analysisFilters });
     }
     activeListing = response?.listing ?? null;
     analysis = response?.analysis ?? null;
@@ -182,6 +231,7 @@
   }
 
   onMount(() => {
+    loadFiltersCollapsed();
     loadData();
   });
 </script>
@@ -350,6 +400,47 @@
         </ul>
       {:else}
         <div class="muted">Noch keine Preisänderungen.</div>
+      {/if}
+    </section>
+
+    <section class="analysis">
+      <div
+        class="metric-row clickable-row"
+        role="button"
+        tabindex="0"
+        on:click={toggleFiltersCollapsed}
+        on:keydown={(event) => (event.key === 'Enter' || event.key === ' ') && toggleFiltersCollapsed()}
+      >
+        <span class="label">Filter Vergleichsmenge</span>
+        <button
+          class="action"
+          on:click={(event) => {
+            event.stopPropagation();
+            toggleFiltersCollapsed();
+          }}
+        >
+          {filtersCollapsed ? '▸' : '▾'}
+        </button>
+      </div>
+      {#if !filtersCollapsed}
+        <div class="action-row">
+          <label class="inline-input">
+            <input type="checkbox" bind:checked={analysisFilters.matchFuel} on:change={onFilterChange} />
+            <span>Nur gleicher Treibstoff</span>
+          </label>
+        </div>
+        <div class="action-row">
+          <label class="inline-input">
+            <input type="checkbox" bind:checked={analysisFilters.matchDrivetrain} on:change={onFilterChange} />
+            <span>Nur gleicher Antrieb</span>
+          </label>
+        </div>
+        <div class="action-row">
+          <label class="inline-input">
+            <input type="checkbox" bind:checked={analysisFilters.matchTransmission} on:change={onFilterChange} />
+            <span>Nur gleiche Getriebeart</span>
+          </label>
+        </div>
       {/if}
     </section>
   {/if}

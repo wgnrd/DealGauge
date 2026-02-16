@@ -9,16 +9,17 @@ import {
   saveListings,
   upsertListings,
 } from '../lib/storage';
-import type { Listing, ListingsMap } from '../lib/types';
+import { defaultAnalysisFilters } from '../lib/types';
+import type { AnalysisFilters, Listing, ListingsMap } from '../lib/types';
 
 type Message =
   | { type: 'upsert_listings'; listings: Listing[] }
   | { type: 'get_count' }
   | { type: 'get_listing'; id: string }
-  | { type: 'get_analysis'; id: string }
+  | { type: 'get_analysis'; id: string; filters?: AnalysisFilters }
   | { type: 'get_export' }
   | { type: 'import_listings'; listings: Listing[]; mode: 'merge' | 'replace' }
-  | { type: 'analyze_listings'; listings: Listing[] }
+  | { type: 'analyze_listings'; listings: Listing[]; filters?: AnalysisFilters }
   | { type: 'clear_all' }
   | { type: 'delete_listing'; id: string }
   | { type: 'prune_older_than'; days: number };
@@ -48,11 +49,12 @@ export default defineBackground(() => {
     }
 
     if (message?.type === 'get_analysis') {
+      const filters = message.filters ?? defaultAnalysisFilters();
       return Promise.all([getListing(message.id), loadListings()]).then(([listing, listings]) => {
         if (!listing) {
           return { ok: true, listing: null, analysis: null };
         }
-        const analysis = analyzeListing(listing, listings);
+        const analysis = analyzeListing(listing, listings, filters);
         return { ok: true, listing, analysis };
       });
     }
@@ -88,10 +90,11 @@ export default defineBackground(() => {
     }
 
     if (message?.type === 'analyze_listings') {
+      const filters = message.filters ?? defaultAnalysisFilters();
       return loadListings().then((listings) => {
         const analyses = message.listings.map((listing) => ({
           id: listing.id,
-          analysis: analyzeListing(listing, listings),
+          analysis: analyzeListing(listing, listings, filters),
         }));
         return { ok: true, analyses };
       });
