@@ -1,8 +1,15 @@
-import { normalizeText } from './parse';
+import { canonicalizeUrl, normalizeText } from './parse';
 import type { Analysis, Listing, ListingsMap } from './types';
 
 const MIN_COMPARABLES_FOR_WEIGHTED_ESTIMATE = 10;
 const TRIM_PERCENT = 0.1;
+
+function extractNumericListingId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const matches = value.match(/\d{6,}/g);
+  if (!matches?.length) return null;
+  return matches[matches.length - 1] ?? null;
+}
 
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -55,8 +62,13 @@ function weightedExpectedPrice(target: Listing, comparables: Listing[]): number 
 }
 
 export function findComparables(target: Listing, listings: ListingsMap): Listing[] {
+  const targetCanonicalUrl = canonicalizeUrl(target.url ?? '');
+  const targetNumericId = extractNumericListingId(target.id) ?? extractNumericListingId(target.url);
   return Object.values(listings).filter((item) => {
     if (item.id === target.id) return false;
+    if (item.url && target.url && canonicalizeUrl(item.url) === targetCanonicalUrl) return false;
+    const itemNumericId = extractNumericListingId(item.id) ?? extractNumericListingId(item.url);
+    if (itemNumericId && targetNumericId && itemNumericId === targetNumericId) return false;
     if (!item.brand || !item.model || !target.brand || !target.model) return false;
     if (item.brand !== target.brand || item.model !== target.model) return false;
     if ((item.trim ?? null) !== (target.trim ?? null)) return false;

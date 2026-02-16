@@ -10,10 +10,6 @@
   let isDetailPage = false;
   let datasetLastCaptured: string | null = null;
   let pruneDays = 30;
-  let importInput: HTMLInputElement | null = null;
-  let showImportModal = false;
-  let pendingImportListings: Listing[] = [];
-  let pendingImportName: string | null = null;
 
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -50,6 +46,26 @@
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '—';
     return date.toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  function extractNumericListingId(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const matches = value.match(/\d{6,}/g);
+    if (!matches?.length) return null;
+    return matches[matches.length - 1] ?? null;
+  }
+
+  function isSameListing(a: Listing, b: Listing): boolean {
+    if (a.id === b.id) return true;
+    if (a.url && b.url && canonicalizeUrl(a.url) === canonicalizeUrl(b.url)) return true;
+    const aNumericId = extractNumericListingId(a.id) ?? extractNumericListingId(a.url);
+    const bNumericId = extractNumericListingId(b.id) ?? extractNumericListingId(b.url);
+    return !!aNumericId && !!bNumericId && aNumericId === bNumericId;
+  }
+
+  function visibleComparables(): Listing[] {
+    if (!analysis?.comparables?.length || !activeListing) return [];
+    return analysis.comparables.filter((comp) => !isSameListing(comp, activeListing));
   }
 
   async function downloadData(kind: 'json' | 'csv') {
@@ -106,69 +122,10 @@
     URL.revokeObjectURL(url);
   }
 
-  function normalizeImportPayload(payload: unknown): Listing[] {
-    if (Array.isArray(payload)) return payload as Listing[];
-    if (payload && typeof payload === 'object' && Array.isArray((payload as { listings?: unknown }).listings)) {
-      return (payload as { listings: Listing[] }).listings;
-    }
-    return [];
-  }
-
   async function openImportDialog() {
-    importInput?.click();
-  }
-
-  async function handleImport(event: Event) {
-    const input = event.currentTarget as HTMLInputElement | null;
-    const file = input?.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      const listings = normalizeImportPayload(parsed).filter((item) => item && typeof item.id === 'string');
-      if (!listings.length) {
-        window.alert('Keine gültigen Daten im Import gefunden.');
-        return;
-      }
-      pendingImportListings = listings;
-      pendingImportName = file.name;
-      showImportModal = true;
-    } catch (error) {
-      console.error('Import failed', error);
-      window.alert('Import fehlgeschlagen. Datei ist kein gültiges JSON.');
-    } finally {
-      if (input) input.value = '';
-    }
-  }
-
-  function cancelImport() {
-    showImportModal = false;
-    pendingImportListings = [];
-    pendingImportName = null;
-  }
-
-  async function confirmImport(mode: 'merge' | 'replace') {
-    if (!pendingImportListings.length) {
-      cancelImport();
-      return;
-    }
-    const response = await browser.runtime.sendMessage({
-      type: 'import_listings',
-      listings: pendingImportListings,
-      mode,
-    });
-    if (response?.ok) {
-      const importedCount = response.imported ?? pendingImportListings.length;
-      window.alert(
-        mode === 'replace'
-          ? `Import abgeschlossen: ${importedCount} Anzeigen ersetzt.`
-          : `Import abgeschlossen: ${importedCount} Anzeigen zusammengeführt.`,
-      );
-      await loadData();
-    } else {
-      window.alert('Import fehlgeschlagen.');
-    }
-    cancelImport();
+    const url = browser.runtime.getURL('import.html');
+    await browser.tabs.create({ url });
+    window.close();
   }
 
   async function clearAllData() {
@@ -259,14 +216,7 @@
     <div class="action-row">
       <button class="action" on:click={() => downloadData('json')}>JSON exportieren</button>
       <button class="action" on:click={() => downloadData('csv')}>CSV exportieren</button>
-      <button class="action" on:click={openImportDialog}>Importieren</button>
-      <input
-        class="file-input"
-        type="file"
-        accept="application/json"
-        bind:this={importInput}
-        on:change={handleImport}
-      />
+      <button class="action" on:click={openImportDialog}>JSON importieren</button>
     </div>
     <div class="action-row">
       <label class="inline-input">
@@ -277,34 +227,6 @@
       <button class="action" on:click={pruneOlderThan}>Bereinigen</button>
     </div>
   </section>
-
-  {#if showImportModal}
-    <div
-      class="modal-backdrop"
-      role="button"
-      tabindex="0"
-      aria-label="Importdialog schließen"
-      on:click|self={cancelImport}
-      on:keydown={(event) => {
-        if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') cancelImport();
-      }}
-    >
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
-        <h2 id="import-title">Importmodus wählen</h2>
-        <p>
-          Datei: <strong>{pendingImportName ?? 'Unbekannt'}</strong>
-        </p>
-        <p class="muted">
-          Wähle, ob die Daten zusammengeführt oder die bestehenden Daten vollständig ersetzt werden sollen.
-        </p>
-        <div class="modal-actions">
-          <button class="action" on:click={() => confirmImport('merge')}>Zusammenführen</button>
-          <button class="action danger" on:click={() => confirmImport('replace')}>Ersetzen</button>
-          <button class="action ghost" on:click={cancelImport}>Abbrechen</button>
-        </div>
-      </div>
-    </div>
-  {/if}
 
   {#if statusMessage}
     <section class="status">{statusMessage}</section>
@@ -393,9 +315,9 @@
       <div class="metric-row">
         <span class="label">Vergleichbare Anzeigen</span>
       </div>
-      {#if analysis?.comparables?.length}
+      {#if visibleComparables().length}
         <ul>
-          {#each analysis.comparables as comp}
+          {#each visibleComparables() as comp}
             <li>
               <span>
                 <a href={comp.url} target="_blank" rel="noreferrer">
