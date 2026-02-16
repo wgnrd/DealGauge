@@ -1,0 +1,87 @@
+:root {
+  font-family: 'Manrope', 'Segoe UI', system-ui, sans-serif;
+  color: #1d1b16;
+  background: radial-gradient(circle at top left, #f6f1e9 0%, #f3efe7 45%, #efe9df 100%);
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+header p {
+  margin: 6px 0 0;
+  color: #5b5247;
+}
+
+.panel {
+  margin-top: 16px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(29, 27, 22, 0.14);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.file-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7b7164;
+}
+
+.meta {
+  font-size: 14px;
+  color: #1d1b16;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mode {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+select,
+input[type='file'] {
+  font: inherit;
+}
+
+.action {
+  border: 1px solid rgba(29, 27, 22, 0.2);
+  background: #f4efe7;
+  color: #1d1b16;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  margin: 0;
+  padding: 10px;
+  border-radius: 10px;
+  background: #fff8ec;
+  border: 1px solid rgba(124, 106, 78, 0.25);
+}

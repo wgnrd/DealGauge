@@ -48,6 +48,26 @@
     return date.toLocaleString('de-AT', { dateStyle: 'medium', timeStyle: 'short' });
   }
 
+  function extractNumericListingId(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const matches = value.match(/\d{6,}/g);
+    if (!matches?.length) return null;
+    return matches[matches.length - 1] ?? null;
+  }
+
+  function isSameListing(a: Listing, b: Listing): boolean {
+    if (a.id === b.id) return true;
+    if (a.url && b.url && canonicalizeUrl(a.url) === canonicalizeUrl(b.url)) return true;
+    const aNumericId = extractNumericListingId(a.id) ?? extractNumericListingId(a.url);
+    const bNumericId = extractNumericListingId(b.id) ?? extractNumericListingId(b.url);
+    return !!aNumericId && !!bNumericId && aNumericId === bNumericId;
+  }
+
+  function visibleComparables(): Listing[] {
+    if (!analysis?.comparables?.length || !activeListing) return [];
+    return analysis.comparables.filter((comp) => !isSameListing(comp, activeListing));
+  }
+
   async function downloadData(kind: 'json' | 'csv') {
     const response = await browser.runtime.sendMessage({ type: 'get_export' });
     if (!response?.listings) return;
@@ -100,6 +120,12 @@
     a.download = 'dealgauge-listings.csv';
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function openImportDialog() {
+    const url = browser.runtime.getURL('import.html');
+    await browser.tabs.create({ url });
+    window.close();
   }
 
   async function clearAllData() {
@@ -190,6 +216,7 @@
     <div class="action-row">
       <button class="action" on:click={() => downloadData('json')}>JSON exportieren</button>
       <button class="action" on:click={() => downloadData('csv')}>CSV exportieren</button>
+      <button class="action" on:click={openImportDialog}>JSON importieren</button>
     </div>
     <div class="action-row">
       <label class="inline-input">
@@ -288,9 +315,9 @@
       <div class="metric-row">
         <span class="label">Vergleichbare Anzeigen</span>
       </div>
-      {#if analysis?.comparables?.length}
+      {#if visibleComparables().length}
         <ul>
-          {#each analysis.comparables as comp}
+          {#each visibleComparables() as comp}
             <li>
               <span>
                 <a href={comp.url} target="_blank" rel="noreferrer">
