@@ -6,9 +6,10 @@ import {
   getListing,
   loadListings,
   pruneListingsOlderThan,
+  saveListings,
   upsertListings,
 } from '../lib/storage';
-import type { Listing } from '../lib/types';
+import type { Listing, ListingsMap } from '../lib/types';
 
 type Message =
   | { type: 'upsert_listings'; listings: Listing[] }
@@ -16,6 +17,7 @@ type Message =
   | { type: 'get_listing'; id: string }
   | { type: 'get_analysis'; id: string }
   | { type: 'get_export' }
+  | { type: 'import_listings'; listings: Listing[]; mode: 'merge' | 'replace' }
   | { type: 'analyze_listings'; listings: Listing[] }
   | { type: 'clear_all' }
   | { type: 'delete_listing'; id: string }
@@ -59,6 +61,29 @@ export default defineBackground(() => {
       return loadListings().then((listings) => ({
         ok: true,
         listings: Object.values(listings),
+      }));
+    }
+
+    if (message?.type === 'import_listings') {
+      const incoming = Array.isArray(message.listings) ? message.listings : [];
+      if (message.mode === 'replace') {
+        const listings: ListingsMap = {};
+        for (const item of incoming) {
+          if (item?.id) {
+            listings[item.id] = item;
+          }
+        }
+        return saveListings(listings).then(() => ({
+          ok: true,
+          imported: Object.keys(listings).length,
+          mode: 'replace',
+        }));
+      }
+      return upsertListings(incoming).then((listings) => ({
+        ok: true,
+        imported: incoming.length,
+        total: Object.keys(listings).length,
+        mode: 'merge',
       }));
     }
 
